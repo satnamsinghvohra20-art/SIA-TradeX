@@ -21,8 +21,8 @@ class PaperAccount:
         with self._lock:
             total = self.cash
 
-        for sym, pos in open_positions.items():
-            price = get_price_fn(sym)
+        for key, pos in open_positions.items():
+            price = get_price_fn(pos.symbol)
             if price is None or price <= 0:
                 total += pos.usdt_size
                 continue

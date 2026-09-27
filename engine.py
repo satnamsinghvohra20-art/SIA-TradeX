@@ -101,12 +101,13 @@ class QuantEngine:
 
         pos_list = []
         with self._positions_lock:
-            for sym, p in self.positions.items():
-                cur_price = self._get_fast_price(sym) or p.entry
+            for pos_id, p in self.positions.items():
+                cur_price = self._get_fast_price(p.symbol) or p.entry
                 mult = p.leverage * p.usdt_size
                 pnl = ((cur_price - p.entry) / p.entry * mult) if p.direction == "LONG" else ((p.entry - cur_price) / p.entry * mult)
                 pos_list.append({
-                    "symbol": sym,
+                    "id": p.id,
+                    "symbol": p.symbol,
                     "direction": p.direction,
                     "entry": p.entry,
                     "current_price": cur_price,
@@ -177,25 +178,26 @@ class QuantEngine:
             f"RSI 1h: <code>{btc_ctx.rsi_1h or 'N/A'}</code> | Funding: <code>{btc_ctx.funding_rate or 0.0:.5f}</code>"
         )
 
-    def force_close_symbol(self, symbol: str) -> str:
+    def force_close_symbol(self, target: str) -> str:
+        target_clean = target.strip()
+        closed_count = 0
         with self._positions_lock:
-            pos = self.positions.get(symbol)
-        if not pos:
-            return f"No open position on {symbol}."
-        self._close_position(pos, "MANUAL / FORCE CLOSE")
-        return f"Closed {symbol} at market price."
+            matching = [p for p in self.positions.values() if p.symbol == target_clean.upper() or p.id == target_clean]
+        if not matching:
+            return f"No open positions matching {target_clean}."
+        for pos in matching:
+            self._close_position(pos, "MANUAL / FORCE CLOSE")
+            closed_count += 1
+        return f"Closed {closed_count} position(s) for {target_clean}."
 
     def force_close_all(self) -> str:
         with self._positions_lock:
-            open_syms = list(self.positions.keys())
-        if not open_syms:
+            open_positions = list(self.positions.values())
+        if not open_positions:
             return "No positions currently open."
-        for s in open_syms:
-            with self._positions_lock:
-                pos = self.positions.get(s)
-            if pos:
-                self._close_position(pos, "PANIC / EMERGENCY CLOSE ALL")
-        return f"Emergency closed {len(open_syms)} positions."
+        for pos in open_positions:
+            self._close_position(pos, "PANIC / EMERGENCY CLOSE ALL")
+        return f"Emergency closed {len(open_positions)} positions."
 
     def inject_manual_trade(self, symbol: str, direction: str, size: Optional[float], force: bool):
         self.queue.add(Signal(
@@ -267,7 +269,7 @@ class QuantEngine:
         )
 
         with self._positions_lock:
-            self.positions[symbol] = new_pos
+            self.positions[new_pos.id] = new_pos
 
         # Notify via Telegram
         telegram_service.notify_trade_open(new_pos, score, ctx.regime.value, ai_decision.reason)
@@ -284,7 +286,7 @@ class QuantEngine:
             self.paper_account.release_margin(pos.usdt_size, pnl)
 
         with self._positions_lock:
-            self.positions.pop(symbol, None)
+            self.positions.pop(pos.id, None)
 
         if pnl < 0:
             self.consecutive_losses += 1
@@ -342,8 +344,6 @@ class QuantEngine:
         # 1. Process manual override signals first
         manual_signals = self.queue.pop_manual()
         for sig in manual_signals:
-            if sig.symbol in self.positions:
-                continue
             ctx = market_data.get_market_context(sig.symbol)
             ai_decision = gemini_service.evaluate_signal(sig.symbol, sig.direction, ctx)
             size = sig.size_override or settings.MIN_TRADE_USDT
@@ -362,7 +362,8 @@ class QuantEngine:
             direction = item["direction"]
 
             with self._positions_lock:
-                if sym in self.positions:
+                sym_count = sum(1 for p in self.positions.values() if p.symbol == sym)
+                if sym_count >= settings.MAX_PER_SYMBOL_POSITIONS:
                     continue
                 if len(self.positions) >= settings.MAX_OPEN_TRADES:
                     break
@@ -420,12 +421,12 @@ class QuantEngine:
     def _check_positions_health(self):
         """Monitors open positions for Take Profit, Stop Loss, Trailing Stops, and Smart Exits."""
         with self._positions_lock:
-            active_symbols = list(self.positions.keys())
+            active_positions = list(self.positions.values())
 
-        for sym in active_symbols:
-            with self._positions_lock:
-                pos = self.positions.get(sym)
-            if not pos:
+        for pos in active_positions:
+            sym = pos.symbol
+            price = self._get_fast_price(sym) or pos.entry
+            if not price or price <= 0:
                 continue
 
             price = self._get_fast_price(sym) or pos.entry
@@ -517,7 +518,7 @@ class QuantEngine:
                     continue
 
     def _autonomous_quant_scalper(self):
-        """Continuous high-frequency quant scalper scanning 5m microstructure every 6 seconds."""
+        """Continuous high-frequency quant scalper scanning 5m microstructure rapidly across all active symbols."""
         idx = 0
         while self.running:
             if not self.ai_trading_active:
@@ -527,37 +528,36 @@ class QuantEngine:
                 sym = settings.ACTIVE_SYMBOLS[idx % len(settings.ACTIVE_SYMBOLS)]
                 idx += 1
                 with self._positions_lock:
-                    if sym in self.positions:
-                        time.sleep(1.0)
+                    sym_count = sum(1 for p in self.positions.values() if p.symbol == sym)
+                    if sym_count >= settings.MAX_PER_SYMBOL_POSITIONS:
+                        time.sleep(0.05)
                         continue
 
                 ctx = market_data.get_market_context(sym)
                 ofi = self.microstructure.get_order_flow_imbalance(sym)
 
                 # High-Expectancy Microstructure Scalp Trigger
-                # Long: 1h Long + 5m RSI in sweet spot (35-62) + Order book bid depth support
-                if ctx.momentum_1h == "LONG" and ctx.rsi_5m and (35.0 <= ctx.rsi_5m <= 62.0) and ofi > 0.08:
+                if ctx.momentum_1h == "LONG" and ctx.rsi_5m and (35.0 <= ctx.rsi_5m <= 65.0) and ofi > 0.05:
                     self.queue.add(Signal(
                         symbol=sym,
                         direction="LONG",
                         source="quant_scalper",
-                        reason=f"Quant Scalp Long: 1h Trend + OFI {ofi:+.2f} + RSI 5m {ctx.rsi_5m:.0f}",
+                        reason=f"Quant Scalp Long: Trend + OFI {ofi:+.2f} + RSI {ctx.rsi_5m:.0f}",
                         score=3,
                         confidence=82
                     ))
-                # Short: 1h Short + 5m RSI in sweet spot (38-65) + Order book ask pressure
-                elif ctx.momentum_1h == "SHORT" and ctx.rsi_5m and (38.0 <= ctx.rsi_5m <= 65.0) and ofi < -0.08:
+                elif ctx.momentum_1h == "SHORT" and ctx.rsi_5m and (35.0 <= ctx.rsi_5m <= 65.0) and ofi < -0.05:
                     self.queue.add(Signal(
                         symbol=sym,
                         direction="SHORT",
                         source="quant_scalper",
-                        reason=f"Quant Scalp Short: 1h Trend + OFI {ofi:+.2f} + RSI 5m {ctx.rsi_5m:.0f}",
+                        reason=f"Quant Scalp Short: Trend + OFI {ofi:+.2f} + RSI {ctx.rsi_5m:.0f}",
                         score=3,
                         confidence=82
                     ))
             except Exception:
                 pass
-            time.sleep(6.0)
+            time.sleep(0.5)
 
     def _autonomous_gemini_scanner(self):
         """Rotates through active symbols periodically to detect AI setups."""
@@ -570,7 +570,6 @@ class QuantEngine:
                 sym = settings.ACTIVE_SYMBOLS[idx % len(settings.ACTIVE_SYMBOLS)]
                 idx += 1
                 ctx = market_data.get_market_context(sym)
-                # Unbiased direction hint from current market momentum
                 hint = ctx.momentum_1h if ctx.momentum_1h in ("LONG", "SHORT") else ("LONG" if (ctx.rsi_1h or 50) > 50 else "SHORT")
                 decision = gemini_service.evaluate_signal(sym, hint, ctx)
                 if decision.signal in ("LONG", "SHORT") and decision.confidence >= settings.GEMINI_AUTO_MIN_CONF:
@@ -584,7 +583,7 @@ class QuantEngine:
                     ))
             except Exception:
                 pass
-            time.sleep(settings.GEMINI_AUTO_SCAN_SEC)
+            time.sleep(5.0)
 
     def run(self):
         self.running = True

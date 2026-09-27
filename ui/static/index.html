@@ -543,6 +543,27 @@
             <option value="DOGEUSDT">DOGEUSDT</option>
             <option value="AVAXUSDT">AVAXUSDT</option>
             <option value="ADAUSDT">ADAUSDT</option>
+            <option value="XRPUSDT">XRPUSDT</option>
+            <option value="BNBUSDT">BNBUSDT</option>
+            <option value="SUIUSDT">SUIUSDT</option>
+            <option value="NEARUSDT">NEARUSDT</option>
+            <option value="APTUSDT">APTUSDT</option>
+            <option value="OPUSDT">OPUSDT</option>
+            <option value="ARBUSDT">ARBUSDT</option>
+            <option value="PEPEUSDT">PEPEUSDT</option>
+            <option value="SHIBUSDT">SHIBUSDT</option>
+            <option value="WIFUSDT">WIFUSDT</option>
+            <option value="FETUSDT">FETUSDT</option>
+            <option value="RENDERUSDT">RENDERUSDT</option>
+            <option value="INJUSDT">INJUSDT</option>
+            <option value="TIAUSDT">TIAUSDT</option>
+            <option value="SEIUSDT">SEIUSDT</option>
+            <option value="AAVEUSDT">AAVEUSDT</option>
+            <option value="UNIUSDT">UNIUSDT</option>
+            <option value="LDOUSDT">LDOUSDT</option>
+            <option value="DOTUSDT">DOTUSDT</option>
+            <option value="FILUSDT">FILUSDT</option>
+            <option value="TRXUSDT">TRXUSDT</option>
           </select>
           <input id="tradeSize" type="number" class="trade-input" placeholder="Size (USDT, e.g. 20)" value="20" style="width: 140px;">
           <button class="trade-btn btn-buy" onclick="submitManualTrade('LONG')">LONG BUY</button>
@@ -674,11 +695,19 @@
         updateAiButtonUI(state.ai_trading_active);
       }
 
-      // Update Live Real Market Prices Strip
+      // Update Live Real Market Prices Strip (dynamically supports all active pairs)
       if (state.ticker_prices) {
+        const strip = document.getElementById("tickerStrip");
         for (const [sym, price] of Object.entries(state.ticker_prices)) {
-          const el = document.getElementById(`tick-${sym}`);
-          if (el && price) {
+          let el = document.getElementById(`tick-${sym}`);
+          if (!el) {
+            const shortName = sym.replace("USDT", "");
+            const item = document.createElement("div");
+            item.className = "ticker-item";
+            item.innerHTML = `<span class="ticker-name">${shortName}:</span> <span class="ticker-price" id="tick-${sym}">$${Number(price).toFixed(2)}</span>`;
+            strip.appendChild(item);
+            el = document.getElementById(`tick-${sym}`);
+          } else if (price) {
             el.innerText = `$${Number(price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 4})}`;
           }
         }
@@ -694,11 +723,11 @@
       document.getElementById("metricWinRate").innerText = `${state.win_rate.toFixed(1)}% (${state.wins}W / ${state.losses}L)`;
       
       const heatPct = Math.round(state.portfolio_heat * 100);
-      document.getElementById("metricHeat").innerText = `${state.positions_count} / ${state.max_positions} (${heatPct}%)`;
+      document.getElementById("metricHeat").innerText = `${state.positions_count} Active (Heat: ${heatPct}%)`;
 
       // 3. Active Positions
       const tbody = document.getElementById("positionsTableBody");
-      document.getElementById("posCount").innerText = `${state.positions.length} Open`;
+      document.getElementById("posCount").innerText = `${state.positions.length} Open (Unlimited Mode)`;
 
       if (!state.positions || state.positions.length === 0) {
         tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 30px;">No active positions. Scanning multi-factor confluence...</td></tr>`;
@@ -707,6 +736,7 @@
           const pnlClass = p.pnl >= 0 ? 'val-positive' : 'val-negative';
           const pnlStr = `${p.pnl >= 0 ? '+' : ''}$${p.pnl.toFixed(2)}`;
           const sideClass = p.direction === 'LONG' ? 'tag-long' : 'tag-short';
+          const closeKey = p.id || p.symbol;
           return `
             <tr>
               <td><b>${p.symbol}</b></td>
@@ -716,7 +746,7 @@
               <td class="${pnlClass}"><b>${pnlStr}</b></td>
               <td>$${p.tp2.toFixed(4)} / $${p.sl.toFixed(4)}</td>
               <td>
-                <button class="close-btn" onclick="closePosition('${p.symbol}')">CLOSE</button>
+                <button class="close-btn" onclick="closePosition('${closeKey}')">CLOSE</button>
               </td>
             </tr>
           `;

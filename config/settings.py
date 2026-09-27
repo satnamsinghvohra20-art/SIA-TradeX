@@ -67,19 +67,21 @@ class Settings(BaseSettings):
     POLY_FETCH_LIMIT: int = 300
 
     # Quantitative Risk & Position Sizing
+    # Quantitative Risk & Position Sizing (UNLIMITED TRADES MODE)
     DEFAULT_LEVERAGE: int = 3
     PAPER_STARTING_BALANCE: float = 1000.0
     RISK_PER_TRADE_PCT: float = 1.5      # 1.5% capital risked per trade
     MIN_TRADE_USDT: float = 10.0
     MAX_TRADE_USDT: float = 65.0
-    MAX_OPEN_TRADES: int = 6
-    MAX_PORTFOLIO_HEAT: float = 0.50     # Max 50% capital committed in margins
+    MAX_OPEN_TRADES: int = 150           # Unlimited concurrent trades mode
+    MAX_PER_SYMBOL_POSITIONS: int = 3    # Allows multiple concurrent trade entries per symbol
+    MAX_PORTFOLIO_HEAT: float = 0.95     # Max 95% capital committed in margins
 
     # Circuit Breakers
-    DAILY_LOSS_LIMIT: float = 50.0       # Max $50 loss in 24h before automatic circuit break
-    DAILY_PROFIT_TARGET: float = 150.0   # Stop taking new entries once target is secured
-    MAX_CONSECUTIVE_LOSSES: int = 3
-    COOLDOWN_MINUTES: int = 15
+    DAILY_LOSS_LIMIT: float = 150.0      # Scaled for multi-position mode
+    DAILY_PROFIT_TARGET: float = 500.0   # Scaled target
+    MAX_CONSECUTIVE_LOSSES: int = 8
+    COOLDOWN_MINUTES: int = 10
 
     # Strategy Parameters
     USE_ATR_EXITS: bool = True
@@ -111,22 +113,24 @@ class Settings(BaseSettings):
     VOLUME_SPIKE_MULT: float = 1.15
 
     # Signal Score Thresholds
-    MIN_SIGNAL_SCORE: int = 5
+    MIN_SIGNAL_SCORE: int = 4            # High sensitivity for multi-opportunity flow
     MAX_SIGNAL_SCORE: int = 8
 
-    # Symbol Universe
+    # Expanded Symbol Universe (Top 28 High-Volume Binance Futures)
     ACTIVE_SYMBOLS: List[str] = [
-        "BTCUSDT", "ETHUSDT", "SOLUSDT", "LINKUSDT",
-        "DOGEUSDT", "AVAXUSDT", "ADAUSDT"
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "LINKUSDT", "DOGEUSDT", "AVAXUSDT", "ADAUSDT",
+        "XRPUSDT", "BNBUSDT", "SUIUSDT", "NEARUSDT", "APTUSDT", "OPUSDT", "ARBUSDT",
+        "PEPEUSDT", "SHIBUSDT", "WIFUSDT", "FETUSDT", "RENDERUSDT", "INJUSDT",
+        "TIAUSDT", "SEIUSDT", "AAVEUSDT", "UNIUSDT", "LDOUSDT", "DOTUSDT", "FILUSDT", "TRXUSDT"
     ]
 
     CORRELATION_GROUPS: Dict[str, Set[str]] = {
         "btc_group": {"BTCUSDT"},
         "eth_group": {"ETHUSDT", "ARBUSDT", "OPUSDT"},
-        "l1_group":  {"SOLUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT"},
-        "meme_group": {"DOGEUSDT", "PEPEUSDT"},
+        "l1_group":  {"SOLUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT", "APTUSDT", "SEIUSDT"},
+        "meme_group": {"DOGEUSDT", "PEPEUSDT", "SHIBUSDT", "WIFUSDT"},
     }
-    CORRELATION_LIMIT_PCT: float = 0.50
+    CORRELATION_LIMIT_PCT: float = 0.85
 
     # Database
     DB_PATH: str = str(BASE_DIR / "sia_tradex.db")

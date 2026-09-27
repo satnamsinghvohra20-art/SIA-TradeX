@@ -87,6 +87,7 @@ class Signal(BaseModel):
 
 class Position(BaseModel):
     """Active open position."""
+    id: str = ""
     symbol: str
     direction: Literal["LONG", "SHORT"]
     entry: float
@@ -105,6 +106,12 @@ class Position(BaseModel):
     tp1_done: bool = False
     last_rsi5: Optional[float] = None
     leverage: int = 3
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        if not self.id:
+            raw = f"{self.symbol}_{self.direction}_{self.ts}_{time.time()}"
+            self.id = hashlib.md5(raw.encode()).hexdigest()[:12]
 
 
 class TradeRecord(BaseModel):

@@ -49,8 +49,8 @@ class RiskManager:
 
             # Calculate current total margin exposed to this correlation cluster in same direction
             cluster_exposure = sum(
-                p.usdt_size for sym, p in open_positions.items()
-                if sym in group_symbols and p.direction == direction
+                p.usdt_size for p in open_positions.values()
+                if p.symbol in group_symbols and p.direction == direction
             )
 
             max_allowed = equity * settings.CORRELATION_LIMIT_PCT
