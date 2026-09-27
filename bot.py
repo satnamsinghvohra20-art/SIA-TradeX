@@ -929,6 +929,8 @@ class PolymarketBinanceBot:
         self.paper_mode = False if live_flag else paper_mode
         self.running = False
         self.ai_trading_active = True
+        self.symbol_last_entry: Dict[str, float] = {}
+        self.active_universe: List[str] = list(SYMBOL_MAP.values())
 
         # Core subsystems
         self.state = DailyState()
@@ -1286,54 +1288,151 @@ class PolymarketBinanceBot:
                 print(f" {p['symbol']:<10} {p['direction']:<6} ${p['entry']:<9.4f} ${p['current_price']:<9.4f} {col}{'+' if p['pnl']>=0 else ''}${p['pnl']:<10.2f}{Style.RESET_ALL} {p['age_mins']}m")
         print("="*70 + "\n")
 
-    def run_polymarket_pipeline(self):
-        """Continuously detects probability spikes and triggers quantitative confluence."""
-        while self.running:
-            if self.ai_trading_active:
-                spikes = self.poly.scan_spikes()
-                for sp in spikes:
-                    sym = sp["symbol"]
-                    direction = sp["direction"]
+    def scan_universe_confluence(self) -> int:
+        """
+        Wall Street Multi-Asset High-Frequency Quantitative Scanner.
+        Evaluates top liquid Binance Futures pairs against:
+        - 1h EMA(20) Trend & Momentum
+        - Order Flow Imbalance (OFI) alpha from L2 orderbook depth
+        - Funding Rate confirmation
+        - Polymarket predictive consensus/spikes
+        - AI risk evaluation
+        Opens positions autonomously whenever Confluence Score >= 3/5.
+        Returns number of new positions opened.
+        """
+        if not self.ai_trading_active:
+            return 0
 
-                    # Confluence check
-                    indicators = self.market.get_klines_indicators(sym)
-                    funding = self.market.get_funding_rate(sym)
-                    ofi = self.market.get_order_flow_imbalance(sym)
+        now = time.time()
+        opened = 0
 
-                    # AI Validation
-                    ai_res = self.ai.validate(
-                        symbol=sym,
-                        direction=direction,
-                        poly_question=sp["question"],
-                        momentum=indicators.get("momentum", "NEUTRAL"),
-                        ofi=ofi
-                    )
+        for sym in self.active_universe:
+            try:
+                # Cooldown per symbol to space entries
+                if (now - self.symbol_last_entry.get(sym, 0)) < 35.0:
+                    continue
+                if self.tracker.count_symbol_positions(sym) >= MAX_PER_SYMBOL_POSITIONS:
+                    continue
+                if self.tracker.total_count() >= MAX_OPEN_TRADES:
+                    break
+
+                indicators = self.market.get_klines_indicators(sym)
+                funding = self.market.get_funding_rate(sym)
+                ofi = self.market.get_order_flow_imbalance(sym)
+                momentum = indicators.get("momentum", "NEUTRAL")
+
+                # Determine primary directional bias
+                if momentum == "LONG":
+                    direction = "LONG"
+                elif momentum == "SHORT":
+                    direction = "SHORT"
+                else:
+                    if abs(ofi) >= 0.10:
+                        direction = "LONG" if ofi > 0 else "SHORT"
+                    else:
+                        continue
+
+                ai_res = self.ai.validate(
+                    symbol=sym,
+                    direction=direction,
+                    poly_question=f"Binance Microstructure OFI ({ofi:+.2f}) with {momentum} Momentum",
+                    momentum=momentum,
+                    ofi=ofi
+                )
+
+                score, reasons = ConfluenceEngine.evaluate(
+                    direction=direction,
+                    poly_spike=False,
+                    momentum=momentum,
+                    funding_rate=funding,
+                    ofi=ofi,
+                    ai_conf=ai_res["confidence"]
+                )
+
+                # Institutional threshold: 3/5 confluence
+                if score >= 3 and ai_res["approved"]:
+                    cat_reason = f"Confluence ({score}/5) [{direction}]: {', '.join(reasons[:2])}"
+                    self.open_candidate_position(sym, direction, score, cat_reason, ai_res)
+                    self.symbol_last_entry[sym] = now
                     self.latest_ai_event = {
                         "symbol": sym,
                         "signal": direction,
                         "confidence": ai_res["confidence"],
-                        "reason": ai_res["reason"],
-                        "catalyst": sp["question"]
+                        "reason": f"Score {score}/5: {ai_res['reason']}",
+                        "catalyst": cat_reason
                     }
+                    opened += 1
+            except Exception:
+                continue
 
-                    score, reasons = ConfluenceEngine.evaluate(
-                        direction=direction,
-                        poly_spike=True,
-                        momentum=indicators.get("momentum", "NEUTRAL"),
-                        funding_rate=funding,
-                        ofi=ofi,
-                        ai_conf=ai_res["confidence"]
-                    )
+        return opened
 
-                    if score >= MIN_SIGNAL_SCORE and ai_res["approved"]:
-                        cat_reason = f"Polymarket {sp['delta_pct']:+.1f}%: {sp['question']}"
-                        self.open_candidate_position(sym, direction, score, cat_reason, ai_res)
+    def run_polymarket_pipeline(self):
+        """Continuously scans Polymarket prediction catalysts + High-Frequency Quant Universe."""
+        while self.running:
+            if self.ai_trading_active:
+                now = time.time()
+                # 1. Polymarket Prediction Spikes (Priority Catalysts)
+                try:
+                    spikes = self.poly.scan_spikes()
+                    for sp in spikes:
+                        sym = sp["symbol"]
+                        direction = sp["direction"]
+                        if (now - self.symbol_last_entry.get(sym, 0)) < 30.0:
+                            continue
+
+                        indicators = self.market.get_klines_indicators(sym)
+                        funding = self.market.get_funding_rate(sym)
+                        ofi = self.market.get_order_flow_imbalance(sym)
+
+                        ai_res = self.ai.validate(
+                            symbol=sym,
+                            direction=direction,
+                            poly_question=sp["question"],
+                            momentum=indicators.get("momentum", "NEUTRAL"),
+                            ofi=ofi
+                        )
+                        self.latest_ai_event = {
+                            "symbol": sym,
+                            "signal": direction,
+                            "confidence": ai_res["confidence"],
+                            "reason": ai_res["reason"],
+                            "catalyst": sp["question"]
+                        }
+
+                        score, reasons = ConfluenceEngine.evaluate(
+                            direction=direction,
+                            poly_spike=True,
+                            momentum=indicators.get("momentum", "NEUTRAL"),
+                            funding_rate=funding,
+                            ofi=ofi,
+                            ai_conf=ai_res["confidence"]
+                        )
+
+                        if score >= MIN_SIGNAL_SCORE and ai_res["approved"]:
+                            cat_reason = f"Polymarket {sp['delta_pct']:+.1f}%: {sp['question']}"
+                            self.open_candidate_position(sym, direction, score, cat_reason, ai_res)
+                            self.symbol_last_entry[sym] = now
+                except Exception:
+                    pass
+
+                # 2. Continuous Wall Street Multi-Asset Quant Confluence Scanner
+                try:
+                    self.scan_universe_confluence()
+                except Exception:
+                    pass
 
             time.sleep(POLY_SCAN_INTERVAL)
 
     def run(self):
         self.running = True
         print_ascii_banner()
+
+        # Immediate opportunistic scan upon startup
+        try:
+            self.scan_universe_confluence()
+        except Exception:
+            pass
 
         # Start Polymarket scan loop thread
         poly_thread = threading.Thread(target=self.run_polymarket_pipeline, name="poly_pipeline", daemon=True)
@@ -1405,7 +1504,32 @@ try:
     async def toggle_ai():
         if bot_instance_ref:
             bot_instance_ref.ai_trading_active = not bot_instance_ref.ai_trading_active
+            if bot_instance_ref.ai_trading_active:
+                bot_instance_ref.scan_universe_confluence()
             return {"status": "ok", "ai_trading_active": bot_instance_ref.ai_trading_active}
+        return {"error": "Engine not attached"}
+
+    @web_app.post("/api/ai/start")
+    async def start_ai():
+        if bot_instance_ref:
+            bot_instance_ref.ai_trading_active = True
+            opened = bot_instance_ref.scan_universe_confluence()
+            return {"status": "ok", "ai_trading_active": True, "message": f"AI Auto-Trader Active. Scanned and opened {opened} position(s)."}
+        return {"error": "Engine not attached"}
+
+    @web_app.post("/api/ai/pause")
+    async def pause_ai():
+        if bot_instance_ref:
+            bot_instance_ref.ai_trading_active = False
+            return {"status": "ok", "ai_trading_active": False, "message": "AI Auto-Trader Paused."}
+        return {"error": "Engine not attached"}
+
+    @web_app.post("/api/ai/scan-now")
+    async def force_scan():
+        if bot_instance_ref:
+            bot_instance_ref.ai_trading_active = True
+            opened = bot_instance_ref.scan_universe_confluence()
+            return {"status": "ok", "opened": opened, "message": f"Universe Confluence Scan complete. Opened {opened} position(s)."}
         return {"error": "Engine not attached"}
 
     @web_app.post("/api/close")

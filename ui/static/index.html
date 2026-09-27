@@ -255,6 +255,29 @@
       box-shadow: 0 0 20px rgba(255, 140, 0, 0.5);
     }
 
+    .scan-now-btn {
+      background: linear-gradient(135deg, rgba(0, 245, 255, 0.2), rgba(0, 150, 255, 0.3));
+      border: 1px solid var(--accent-cyan);
+      color: #00f5ff;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 0 12px rgba(0, 245, 255, 0.25);
+      transition: all 0.2s ease;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .scan-now-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 22px rgba(0, 245, 255, 0.55);
+      background: linear-gradient(135deg, rgba(0, 245, 255, 0.35), rgba(0, 150, 255, 0.45));
+    }
+
     .reset-btn {
       background: rgba(255, 255, 255, 0.06);
       border: 1px solid rgba(255, 255, 255, 0.15);
@@ -504,6 +527,9 @@
       <div id="regimeBadge" class="badge badge-regime">REGIME: DETECTING...</div>
       <button id="aiToggleButton" class="ai-toggle-btn" onclick="toggleAiTrading()" title="Toggle autonomous AI scan">
         <span class="pulse-dot"></span> <span id="aiBtnText">AI AUTO-TRADER: ACTIVE</span>
+      </button>
+      <button id="scanNowBtn" class="scan-now-btn" onclick="triggerScanNow()" title="Scan top crypto universe and execute high-confluence trades immediately">
+        ⚡ SCAN & TRADE NOW
       </button>
       <button id="stopFlattenButton" class="stop-flatten-btn" onclick="stopAndFlatten()" title="Pause AI and Market-Close all open positions">
         🛑 STOP & FLATTEN
@@ -839,6 +865,18 @@
       line.innerText = `[${d}] ${msg}`;
       box.appendChild(line);
       box.scrollTop = box.scrollHeight;
+    }
+
+    function triggerScanNow() {
+      logTerm("⚡ Triggering immediate Multi-Asset Universe Quant Scan...", "highlight");
+      fetch("/api/ai/scan-now", { method: "POST" })
+        .then(r => r.json())
+        .then(d => {
+          logTerm(d.message || "Universe Scan Completed.", "success");
+          refreshState();
+          fetchRecentTrades();
+        })
+        .catch(e => logTerm("Scan failed: " + e, "warn"));
     }
 
     function triggerPanic() {
