@@ -3,10 +3,20 @@ SIA-TradeX Pro: Autonomous AI Trading Engine
 Main executable CLI with support for Paper/Live modes, Web Dashboard, and pipeline verification.
 """
 
+import os
 import sys
 import time
 import argparse
 import threading
+
+os.environ["PYTHONIOENCODING"] = "utf-8"
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import uvicorn
 from colorama import init, Fore, Style
 
@@ -41,6 +51,7 @@ def print_banner(live_mode: bool, web_enabled: bool, port: int):
 
 def main():
     parser = argparse.ArgumentParser(description="SIA-TradeX Pro Quant Trading System")
+    parser.add_argument("--paper", action="store_true", default=True, help="Enable Paper Simulator execution (Default)")
     parser.add_argument("--live", action="store_true", help="Enable Live Binance Futures execution (Real Money)")
     parser.add_argument("--web", action="store_true", default=True, help="Launch real-time Web Dashboard (default: True)")
     parser.add_argument("--no-web", action="store_true", help="Disable Web Dashboard")
@@ -70,7 +81,7 @@ def main():
 
         web_thread = threading.Thread(target=_run_web, daemon=True, name="web_server")
         web_thread.start()
-        print(f"🚀 {G}Cyber-Quant Web Dashboard available at: {C}http://localhost:{args.port}{RST}\n")
+        print(f"[*] {G}Cyber-Quant Web Dashboard active at: {C}http://localhost:{args.port}{RST}\n")
 
     # Start engine in background thread
     engine_thread = threading.Thread(target=engine.run, daemon=True, name="quant_engine")
