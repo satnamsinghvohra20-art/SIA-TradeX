@@ -102,11 +102,14 @@ class ConfluenceStrategy:
             elif direction == "SHORT" and ctx.order_book_imbalance < -0.12:
                 score_bonus += 1
 
-        # 8. Dynamic Sizing (Risk 1.5% of Equity / SL distance)
-        sl_pct = (settings.FIXED_SL_PCT / 100.0)
-        risk_usdt = equity * (settings.RISK_PER_TRADE_PCT / 100.0)
-        calculated_size = risk_usdt / (settings.DEFAULT_LEVERAGE * sl_pct)
-        position_size = round(max(settings.MIN_TRADE_USDT, min(settings.MAX_TRADE_USDT, calculated_size)), 2)
+        # 8. Dynamic Half-Kelly Sizing
+        from execution.risk_manager import risk_manager
+        position_size = risk_manager.calculate_kelly_position_size(
+            equity=equity,
+            confluence_score=score_bonus + 3,
+            regime_str=ctx.regime.value
+        )
+        filters["position_size"] = position_size
 
         return {
             "score_bonus": max(0, score_bonus),

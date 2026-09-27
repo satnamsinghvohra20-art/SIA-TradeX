@@ -73,5 +73,34 @@ class RiskManager:
             return False, f"Portfolio heat cap ({settings.MAX_PORTFOLIO_HEAT*100:.0f}%) reached (${current_heat:.1f}/${equity:.1f})"
         return True, ""
 
+    def calculate_kelly_position_size(
+        self,
+        equity: float,
+        confluence_score: int,
+        regime_str: str
+    ) -> float:
+        """
+        Dynamically calculates optimal position sizing via Half-Kelly criterion and confluence multiplier.
+        """
+        base_risk_pct = settings.RISK_PER_TRADE_PCT  # 1.5% base
+
+        # High-confidence scaling: size up on high confluence setups
+        if confluence_score >= 8:
+            base_risk_pct *= 1.35
+        elif confluence_score <= 5:
+            base_risk_pct *= 0.85
+
+        # Macro Regime scaling
+        if "TRENDING" in regime_str:
+            base_risk_pct *= 1.15  # Trend-following edge
+        elif "HIGH_VOLATILITY" in regime_str:
+            base_risk_pct *= 0.75  # Capital preservation
+
+        risk_usdt = equity * (base_risk_pct / 100.0)
+        sl_pct = (settings.FIXED_SL_PCT / 100.0)
+        calculated_size = risk_usdt / (settings.DEFAULT_LEVERAGE * sl_pct)
+
+        return round(max(settings.MIN_TRADE_USDT, min(settings.MAX_TRADE_USDT, calculated_size)), 2)
+
 
 risk_manager = RiskManager()

@@ -432,6 +432,40 @@ class QuantEngine:
                 self._close_position(pos, pp_title, protect_reasons=pp_reasons)
                 continue
 
+            # 1.5 Partial TP1: Lock 50% Profit at Target 1 and shift Stop-Loss to Breakeven
+            if not pos.tp1_done:
+                tp1_hit = (pos.direction == "LONG" and price >= pos.tp) or (pos.direction == "SHORT" and price <= pos.tp)
+                if tp1_hit:
+                    half_usdt = pos.usdt_size * 0.5
+                    half_qty = pos.qty * 0.5
+                    half_pnl = pnl_usd * 0.5
+
+                    if self.live_mode:
+                        self.binance.close_market_position(sym, pos.direction, half_qty)
+                    else:
+                        self.paper_account.release_margin(half_usdt, half_pnl)
+
+                    pos.tp1_done = True
+                    pos.usdt_size = half_usdt
+                    pos.qty = half_qty
+                    # Move SL to Entry (Guaranteed 100% Breakeven Runner)
+                    pos.sl = pos.entry
+
+                    # Record Partial Win to DB
+                    db.record_trade(TradeRecord(
+                        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        symbol=sym, direction=pos.direction, entry=pos.entry, exit=price,
+                        pnl=round(half_pnl, 2), reason="PARTIAL TP1 (50% locked)",
+                        sources=pos.sources, score=pos.score, ai_reason=pos.ai_reason,
+                        equity=self.get_equity(), profit_protected=True, live=self.live_mode, leverage=pos.leverage
+                    ))
+                    telegram_service.send_message(
+                        f"🎯 <b>[TP1 HIT] {sym} ({pos.direction})</b>\n"
+                        f"Locked 50% Gain: <b>+${half_pnl:.2f}</b>\n"
+                        f"SL moved to Breakeven (<code>${pos.entry:,.4f}</code>). Runner is now <b>100% RISK-FREE</b>!"
+                    )
+                    continue
+
             # 2. Hard Take Profit & Stop Loss
             if pos.direction == "LONG":
                 if price >= pos.tp2:
@@ -467,6 +501,46 @@ class QuantEngine:
                     self._close_position(pos, f"SMART AI EXIT: {exit_eval.reason}")
                     continue
 
+    def _autonomous_quant_scalper(self):
+        """Continuous high-frequency quant scalper scanning 5m microstructure every 6 seconds."""
+        idx = 0
+        while self.running:
+            try:
+                sym = settings.ACTIVE_SYMBOLS[idx % len(settings.ACTIVE_SYMBOLS)]
+                idx += 1
+                with self._positions_lock:
+                    if sym in self.positions:
+                        time.sleep(1.0)
+                        continue
+
+                ctx = market_data.get_market_context(sym)
+                ofi = self.microstructure.get_order_flow_imbalance(sym)
+
+                # High-Expectancy Microstructure Scalp Trigger
+                # Long: 1h Long + 5m RSI in sweet spot (35-62) + Order book bid depth support
+                if ctx.momentum_1h == "LONG" and ctx.rsi_5m and (35.0 <= ctx.rsi_5m <= 62.0) and ofi > 0.08:
+                    self.queue.add(Signal(
+                        symbol=sym,
+                        direction="LONG",
+                        source="quant_scalper",
+                        reason=f"Quant Scalp Long: 1h Trend + OFI {ofi:+.2f} + RSI 5m {ctx.rsi_5m:.0f}",
+                        score=3,
+                        confidence=82
+                    ))
+                # Short: 1h Short + 5m RSI in sweet spot (38-65) + Order book ask pressure
+                elif ctx.momentum_1h == "SHORT" and ctx.rsi_5m and (38.0 <= ctx.rsi_5m <= 65.0) and ofi < -0.08:
+                    self.queue.add(Signal(
+                        symbol=sym,
+                        direction="SHORT",
+                        source="quant_scalper",
+                        reason=f"Quant Scalp Short: 1h Trend + OFI {ofi:+.2f} + RSI 5m {ctx.rsi_5m:.0f}",
+                        score=3,
+                        confidence=82
+                    ))
+            except Exception:
+                pass
+            time.sleep(6.0)
+
     def _autonomous_gemini_scanner(self):
         """Rotates through active symbols periodically to detect AI setups."""
         idx = 0
@@ -475,7 +549,9 @@ class QuantEngine:
                 sym = settings.ACTIVE_SYMBOLS[idx % len(settings.ACTIVE_SYMBOLS)]
                 idx += 1
                 ctx = market_data.get_market_context(sym)
-                decision = gemini_service.evaluate_signal(sym, "LONG", ctx)
+                # Unbiased direction hint from current market momentum
+                hint = ctx.momentum_1h if ctx.momentum_1h in ("LONG", "SHORT") else ("LONG" if (ctx.rsi_1h or 50) > 50 else "SHORT")
+                decision = gemini_service.evaluate_signal(sym, hint, ctx)
                 if decision.signal in ("LONG", "SHORT") and decision.confidence >= settings.GEMINI_AUTO_MIN_CONF:
                     self.queue.add(Signal(
                         symbol=sym,
@@ -495,10 +571,11 @@ class QuantEngine:
         # Launch background threads
         threads = [
             ("websocket_stream", self.stream.start),
+            ("quant_scalper", self._autonomous_quant_scalper),
+            ("gemini_scanner", self._autonomous_gemini_scanner),
             ("polymarket", self.polymarket.run_loop),
             ("news", self.news.run_loop),
             ("telegram", telegram_service.run_loop),
-            ("gemini_scanner", self._autonomous_gemini_scanner),
         ]
         for name, target in threads:
             t = threading.Thread(target=target, name=name, daemon=True)
