@@ -234,6 +234,49 @@
       box-shadow: 0 6px 20px rgba(255, 26, 64, 0.6);
     }
 
+    .stop-flatten-btn {
+      background: linear-gradient(135deg, rgba(255, 140, 0, 0.25), rgba(255, 69, 0, 0.25));
+      border: 1px solid #ff8c00;
+      color: #ffaa33;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .stop-flatten-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 20px rgba(255, 140, 0, 0.5);
+    }
+
+    .reset-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: var(--text-dim);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .reset-btn:hover {
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+
+
     /* Metric Grid */
     .kpi-grid {
       display: grid;
@@ -459,11 +502,17 @@
       </div>
       <div id="modeBadge" class="badge badge-paper">● REAL-TIME QUANT ENGINE</div>
       <div id="regimeBadge" class="badge badge-regime">REGIME: DETECTING...</div>
-      <button id="aiToggleButton" class="ai-toggle-btn" onclick="toggleAiTrading()">
+      <button id="aiToggleButton" class="ai-toggle-btn" onclick="toggleAiTrading()" title="Toggle autonomous AI scan">
         <span class="pulse-dot"></span> <span id="aiBtnText">AI AUTO-TRADER: ACTIVE</span>
       </button>
-      <button id="panicButton" class="panic-btn" onclick="triggerPanic()">
-        🚨 EMERGENCY CLOSE ALL
+      <button id="stopFlattenButton" class="stop-flatten-btn" onclick="stopAndFlatten()" title="Pause AI and Market-Close all open positions">
+        🛑 STOP & FLATTEN
+      </button>
+      <button id="panicButton" class="panic-btn" onclick="triggerPanic()" title="Emergency market-close all positions">
+        🚨 CLOSE ALL
+      </button>
+      <button id="resetJournalButton" class="reset-btn" onclick="resetJournal()" title="Clear past history & reset balance to $1,000">
+        🧹 RESET JOURNAL
       </button>
     </div>
   </header>
@@ -609,7 +658,10 @@
       <div class="panel">
         <div class="panel-title">
           <span>Recent Journal Trades</span>
-          <span style="font-size: 11px; color: var(--text-dim);">Persistent SQLite DB</span>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="close-btn" onclick="resetJournal()" style="font-size: 10px; padding: 2px 8px; cursor: pointer;">Clear All</button>
+            <span style="font-size: 11px; color: var(--text-dim);">SQLite WAL</span>
+          </div>
         </div>
         <div id="journalContainer" style="font-size: 12px; font-family: 'JetBrains Mono', monospace;">
           <div style="color: var(--text-dim); text-align: center; padding: 20px;">
@@ -738,18 +790,18 @@
         tbody.innerHTML = state.positions.map(p => {
           const pnlClass = p.pnl >= 0 ? 'val-positive' : 'val-negative';
           const pnlStr = `${p.pnl >= 0 ? '+' : ''}$${p.pnl.toFixed(2)}`;
+          const pnlPct = ((p.pnl / (p.usdt_size || 20)) * 100).toFixed(1);
           const sideClass = p.direction === 'LONG' ? 'tag-long' : 'tag-short';
-          const closeKey = p.id || p.symbol;
           return `
             <tr>
               <td><b>${p.symbol}</b></td>
               <td><span class="${sideClass}">${p.direction}</span></td>
               <td>$${p.entry.toFixed(4)}</td>
               <td>$${p.current_price.toFixed(4)}</td>
-              <td class="${pnlClass}"><b>${pnlStr}</b></td>
+              <td class="${pnlClass}"><b>${pnlStr}</b> <span style="font-size: 10px;">(${pnlPct}%)</span></td>
               <td>$${p.tp2.toFixed(4)} / $${p.sl.toFixed(4)}</td>
               <td>
-                <button class="close-btn" onclick="closePosition('${closeKey}')">CLOSE</button>
+                <button class="close-btn" onclick="closePosition('${p.id}', '${p.symbol}')" title="Instantly market close this position">CLOSE</button>
               </td>
             </tr>
           `;
@@ -794,17 +846,64 @@
         fetch("/api/panic", { method: "POST" })
           .then(r => r.json())
           .then(d => {
-            logTerm("PANIC EXECUTED: All positions closed.", "warn");
+            logTerm("PANIC EXECUTED: " + (d.message || "All positions closed."), "warn");
+            refreshState();
+            fetchRecentTrades();
           })
           .catch(e => logTerm("Panic failed: " + e, "warn"));
       }
     }
 
-    function closePosition(symbol) {
-      fetch(`/api/close?symbol=${symbol}`, { method: "POST" })
+    function stopAndFlatten() {
+      if (confirm("Are you sure you want to STOP AI Auto-Trading AND CLOSE ALL open positions immediately?")) {
+        fetch("/api/stop-all", { method: "POST" })
+          .then(r => r.json())
+          .then(d => {
+            updateAiButtonUI(false);
+            logTerm("STOP & FLATTEN EXECUTED: " + d.message, "warn");
+            refreshState();
+            fetchRecentTrades();
+          })
+          .catch(e => logTerm("Stop failed: " + e, "warn"));
+      }
+    }
+
+    function resetJournal() {
+      if (confirm("Reset paper balance to $1,000.00 and wipe all past trade history? You will start with a 100% clean slate.")) {
+        fetch("/api/reset", { method: "POST" })
+          .then(r => r.json())
+          .then(d => {
+            logTerm("JOURNAL RESET: " + d.message, "success");
+            refreshState();
+            fetchRecentTrades();
+          })
+          .catch(e => logTerm("Reset error: " + e, "warn"));
+      }
+    }
+
+    function closePosition(id, symbol) {
+      logTerm(`Sending market close for ${symbol}...`, "warn");
+      fetch("/api/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: id, symbol: symbol })
+      })
+      .then(r => r.json())
+      .then(d => {
+        logTerm(d.message || `Position closed for ${symbol}`, "highlight");
+        refreshState();
+        fetchRecentTrades();
+      })
+      .catch(e => logTerm(`Close error on ${symbol}: ` + e, "warn"));
+    }
+
+    function refreshState() {
+      fetch("/api/state")
         .then(r => r.json())
-        .then(d => logTerm(`Closed position on ${symbol}`, "highlight"))
-        .catch(e => logTerm(`Close error: ${e}`, "warn"));
+        .then(state => {
+          if (state && !state.error) updateDashboard(state);
+        })
+        .catch(() => {});
     }
 
     function submitManualTrade(direction) {
@@ -819,6 +918,7 @@
       .then(r => r.json())
       .then(d => {
         logTerm(`Submitted ${direction} for ${symbol} ($${size})`, "success");
+        refreshState();
       })
       .catch(e => logTerm(`Trade submission error: ${e}`, "warn"));
     }
@@ -829,17 +929,19 @@
         .then(trades => {
           const container = document.getElementById("journalContainer");
           if (!trades || trades.length === 0) {
-            container.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px;">Awaiting completed closed trades.</div>';
+            container.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px;">No trade history. Clean slate ready for trades.</div>';
             return;
           }
-          container.innerHTML = trades.slice(0, 10).map(t => {
+          container.innerHTML = trades.slice(0, 15).map(t => {
             const pnlClass = t.pnl >= 0 ? "val-positive" : "val-negative";
             const sign = t.pnl >= 0 ? "+" : "";
+            const isAi = (t.sources && t.sources.length) || (t.ai_reason && t.ai_reason.length);
+            const tag = isAi ? "[AI]" : "[MANUAL]";
             return `
               <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.05);">
                 <div>
                   <b>${t.symbol}</b> <span style="font-size: 10px; color: ${t.direction === 'LONG' ? 'var(--accent-green)' : 'var(--accent-red)'}">${t.direction}</span>
-                  <div style="font-size: 10px; color: var(--text-dim);">${t.reason || 'Auto Exit'}</div>
+                  <div style="font-size: 10px; color: var(--text-dim);">${t.reason || 'Auto Exit'} <span style="color: var(--accent-cyan); font-size: 9px;">${tag}</span></div>
                 </div>
                 <div style="text-align: right;">
                   <b class="${pnlClass}">${sign}$${Number(t.pnl).toFixed(2)}</b>
@@ -863,8 +965,9 @@
     connectWs();
     setInterval(updateWorldClock, 1000);
     updateWorldClock();
-    setInterval(fetchRecentTrades, 4000);
+    setInterval(fetchRecentTrades, 3000);
     fetchRecentTrades();
+
   </script>
 </body>
 </html>

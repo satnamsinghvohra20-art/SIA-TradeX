@@ -172,5 +172,13 @@ class Database:
             except Exception:
                 return row["value"]
 
+    def clear_all_trades(self):
+        """Clears all trades, equity snapshots, and signal history for a clean start."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM trades;")
+            conn.execute("DELETE FROM equity_snapshots;")
+            conn.execute("DELETE FROM signals_history;")
 
 db = Database()
+
+

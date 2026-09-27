@@ -126,20 +126,65 @@ async def get_ai_status():
     return {"status": "error", "message": "Engine not attached"}
 
 
+class ClosePositionRequest(BaseModel):
+    symbol: Optional[str] = None
+    id: Optional[str] = None
+
+
+@app.get("/api/state")
+async def get_current_state():
+    """Returns instantaneous engine state snapshot."""
+    if engine_ref:
+        return engine_ref.get_dashboard_snapshot()
+    return {"status": "error", "message": "Engine not attached"}
+
+
 @app.post("/api/panic")
 async def panic_close_all():
     """Emergency circuit breaker: market closes all positions immediately."""
     if engine_ref:
         msg = engine_ref.force_close_all()
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
+        return {"status": "ok", "message": msg}
+    return {"status": "error", "message": "Engine not attached"}
+
+
+@app.post("/api/stop-all")
+async def stop_all_and_flatten():
+    """Pauses AI trading AND immediately market-closes all open positions."""
+    if engine_ref:
+        msg = engine_ref.stop_ai_and_flatten_all()
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
+        return {"status": "ok", "ai_trading_active": False, "message": msg}
+    return {"status": "error", "message": "Engine not attached"}
+
+
+@app.post("/api/reset")
+async def reset_journal_and_account():
+    """Wipes historical trade journal and resets paper account balance to clean $1,000.00."""
+    if engine_ref:
+        msg = engine_ref.reset_all_trades_and_account()
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
         return {"status": "ok", "message": msg}
     return {"status": "error", "message": "Engine not attached"}
 
 
 @app.post("/api/close")
-async def close_position(symbol: str):
-    """Closes a specific position at market price."""
+async def close_position(req: Optional[ClosePositionRequest] = None, symbol: Optional[str] = None, id: Optional[str] = None):
+    """Closes a specific position at market price by position ID or symbol."""
     if engine_ref:
-        msg = engine_ref.force_close_symbol(symbol.upper())
+        target = ""
+        if req:
+            target = req.id or req.symbol or ""
+        if not target and id:
+            target = id
+        if not target and symbol:
+            target = symbol
+        target = target.strip()
+        if not target:
+            return {"status": "error", "message": "No symbol or position ID provided"}
+        msg = engine_ref.force_close_symbol(target)
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
         return {"status": "ok", "message": msg}
     return {"status": "error", "message": "Engine not attached"}
 
@@ -149,8 +194,10 @@ async def manual_trade(req: ManualTradeRequest):
     """Injects a candidate trade into confluence evaluation."""
     if engine_ref:
         engine_ref.inject_manual_trade(req.symbol.upper(), req.direction.upper(), req.size, req.force)
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
         return {"status": "ok", "message": f"Queued {req.direction} {req.symbol}"}
     return {"status": "error", "message": "Engine not attached"}
+
 
 
 @app.get("/api/trades")

@@ -61,3 +61,10 @@ class PaperAccount:
             unrealized_pnl=round(upnl, 2),
             open_positions=len(open_positions)
         )
+
+    def reset(self, starting_balance: float = settings.PAPER_STARTING_BALANCE):
+        """Resets paper account cash and realized PnL to initial clean state."""
+        with self._lock:
+            self.cash = starting_balance
+            self.realized_pnl = 0.0
+

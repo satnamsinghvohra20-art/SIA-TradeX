@@ -187,7 +187,10 @@ class QuantEngine:
         target_clean = target.strip()
         closed_count = 0
         with self._positions_lock:
-            matching = [p for p in self.positions.values() if p.symbol == target_clean.upper() or p.id == target_clean]
+            matching = [
+                p for p in self.positions.values()
+                if p.symbol.upper() == target_clean.upper() or p.id.lower() == target_clean.lower()
+            ]
         if not matching:
             return f"No open positions matching {target_clean}."
         for pos in matching:
@@ -203,6 +206,26 @@ class QuantEngine:
         for pos in open_positions:
             self._close_position(pos, "PANIC / EMERGENCY CLOSE ALL")
         return f"Emergency closed {len(open_positions)} positions."
+
+    def stop_ai_and_flatten_all(self) -> str:
+        """Immediately pauses AI and emergency-closes all open positions."""
+        self.ai_trading_active = False
+        msg = self.force_close_all()
+        return f"AI Stopped & {msg}"
+
+    def reset_all_trades_and_account(self) -> str:
+        """Flattens all positions, clears database trade journal, and resets paper account balance to $1,000."""
+        with self._positions_lock:
+            open_positions = list(self.positions.values())
+        for pos in open_positions:
+            self._close_position(pos, "ACCOUNT RESET")
+        with self._positions_lock:
+            self.positions.clear()
+        self.paper_account.reset(settings.PAPER_STARTING_BALANCE)
+        db.clear_all_trades()
+        self.consecutive_losses = 0
+        return "All positions closed, history wiped, paper account reset to $1,000.00."
+
 
     def inject_manual_trade(self, symbol: str, direction: str, size: Optional[float], force: bool):
         self.queue.add(Signal(
@@ -340,13 +363,7 @@ class QuantEngine:
         if not can_trade and not telegram_service.paused:
             return
 
-        # 0. Check Microstructure Liquidation Cascades (Leading Alpha)
-        for sym in settings.ACTIVE_SYMBOLS:
-            liq_sig = self.microstructure.check_liquidation_cascade(sym)
-            if liq_sig:
-                self.queue.add(liq_sig)
-
-        # 1. Process manual override signals first
+        # 1. Process manual override signals first (always allowed, even when AI is paused)
         manual_signals = self.queue.pop_manual()
         for sig in manual_signals:
             ctx = market_data.get_market_context(sig.symbol)
@@ -357,10 +374,20 @@ class QuantEngine:
                 [sig.reason], [sig.source], ai_decision, ctx
             )
 
-        # 2. Process automated confluence signals (only when AI trading is active)
-        merged_signals = self.queue.flush_merged()
+        # Automated pipeline runs ONLY when AI trading is active
         if not self.ai_trading_active:
+            self.queue.flush_merged()
             return
+
+        # 0. Check Microstructure Liquidation Cascades (Leading Alpha)
+        for sym in settings.ACTIVE_SYMBOLS:
+            liq_sig = self.microstructure.check_liquidation_cascade(sym)
+            if liq_sig:
+                self.queue.add(liq_sig)
+
+        # 2. Process automated confluence signals
+        merged_signals = self.queue.flush_merged()
+
 
         for item in merged_signals:
             sym = item["symbol"]
@@ -521,6 +548,29 @@ class QuantEngine:
                 if exit_eval.action == "EXIT" and exit_eval.confidence >= 70:
                     self._close_position(pos, f"SMART AI EXIT: {exit_eval.reason}")
                     continue
+
+            # 5. Dynamic Scalp Profit Lock & Microstructure Reversal
+            ofi = self.microstructure.get_order_flow_imbalance(sym)
+            if age_min >= 2.0:
+                # Strong adverse microstructure shift
+                if pos.direction == "LONG" and ofi < -0.35:
+                    self._close_position(pos, f"OFI ADVERSE REVERSAL ({ofi:+.2f})")
+                    continue
+                elif pos.direction == "SHORT" and ofi > 0.35:
+                    self._close_position(pos, f"OFI ADVERSE REVERSAL ({ofi:+.2f})")
+                    continue
+
+            # 6. Time-based Capital Rotation Exit (Prevents indefinitely stalled trades)
+            # If trade has been open > 15 mins and is in green (+0.30% gain or more), lock profit
+            if age_min >= 15.0 and pnl_usd >= (pos.usdt_size * 0.003):
+                self._close_position(pos, f"SCALP PROFIT HARVEST (+${pnl_usd:.2f} at {age_min:.0f}m)")
+                continue
+
+            # If trade has been open > 35 mins without hitting TP, rotate capital
+            if age_min >= 35.0:
+                self._close_position(pos, f"MAX DURATION ROTATION ({age_min:.0f}m limit)")
+                continue
+
 
     def _autonomous_quant_scalper(self):
         """Continuous high-frequency quant scalper scanning 5m microstructure rapidly across all active symbols."""
