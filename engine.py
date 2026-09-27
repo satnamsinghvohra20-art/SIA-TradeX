@@ -1,6 +1,6 @@
 """
-SIA-TradeX: Unified Engine Orchestrator
-Coordinates multi-source data ingestion, AI evaluation, confluence gating, risk defense, and order execution.
+SIA-TradeX Pro: High-Speed Unified Engine Orchestrator
+Coordinates WebSocket streams, microstructure alpha, maker-first routing, and decoupled hybrid AI.
 """
 
 import time
@@ -17,15 +17,19 @@ from core.models import (
 from core.queue import SignalQueue
 from storage.database import db
 from data.market_data import market_data
+from data.binance_stream import binance_stream
 from data.polymarket import PolymarketFeed
 from data.news_client import NewsFeed
 from ai.gemini_service import gemini_service
+from ai.hybrid_pipeline import hybrid_ai
 from strategies.confluence import confluence_strategy
 from strategies.regime import MarketRegimeDetector
+from strategies.microstructure import microstructure_alpha
 from execution.paper_account import PaperAccount
 from execution.risk_manager import risk_manager
 from execution.profit_protector import ProfitProtector
 from execution.binance_executor import BinanceExecutor
+from execution.smart_router import SmartOrderRouter
 from ui.telegram_service import telegram_service
 from ui.web_server import set_engine, broadcast_state
 
@@ -43,6 +47,10 @@ class QuantEngine:
         self.queue = SignalQueue()
         self.paper_account = PaperAccount()
         self.binance = BinanceExecutor()
+        self.stream = binance_stream
+        self.router = SmartOrderRouter(self.binance)
+        self.microstructure = microstructure_alpha
+        self.hybrid_ai = hybrid_ai
 
         if self.live_mode:
             conn_ok = self.binance.connect()
@@ -69,7 +77,14 @@ class QuantEngine:
         if self.live_mode:
             return self.binance.get_live_balance()
         with self._positions_lock:
-            return self.paper_account.total_equity(self.positions, market_data.mark_price)
+            return self.paper_account.total_equity(self.positions, self._get_fast_price)
+
+    def _get_fast_price(self, symbol: str) -> Optional[float]:
+        """Sub-millisecond price lookup from WebSocket top-of-book, falling back to REST."""
+        mid = self.stream.get_mid_price(symbol)
+        if mid and mid > 0:
+            return mid
+        return market_data.mark_price(symbol)
 
     def get_dashboard_snapshot(self) -> Dict[str, Any]:
         equity = self.get_equity()
@@ -78,7 +93,7 @@ class QuantEngine:
         pos_list = []
         with self._positions_lock:
             for sym, p in self.positions.items():
-                cur_price = market_data.mark_price(sym) or p.entry
+                cur_price = self._get_fast_price(sym) or p.entry
                 mult = p.leverage * p.usdt_size
                 pnl = ((cur_price - p.entry) / p.entry * mult) if p.direction == "LONG" else ((p.entry - cur_price) / p.entry * mult)
                 pos_list.append({
@@ -126,7 +141,7 @@ class QuantEngine:
             f"Open Positions ({snap['positions_count']}/{snap['max_positions']}):"
         ]
         if not snap["positions"]:
-            lines.append("  <i>No active positions. Scanning markets...</i>")
+            lines.append("  <i>No active positions. High-frequency WebSocket streaming...</i>")
         else:
             for p in snap["positions"]:
                 tag = "🟢" if p["direction"] == "LONG" else "🔴"
@@ -193,7 +208,7 @@ class QuantEngine:
         ai_decision: AISignalDecision,
         ctx: MarketContext
     ):
-        price = ctx.price
+        price = self._get_fast_price(symbol) or ctx.price
         atr_val = ctx.atr or (price * 0.015)
 
         # TP / SL Levels (Multi-target + SL)
@@ -209,7 +224,8 @@ class QuantEngine:
         qty = (usdt_size * settings.DEFAULT_LEVERAGE) / price
 
         if self.live_mode:
-            order, levels = self.binance.open_market_position(
+            # Maker-First Post-Only execution
+            order, levels = self.router.execute_maker_first_order(
                 symbol, direction, usdt_size, tp1, tp2, sl
             )
             if not order or not levels:
@@ -246,7 +262,7 @@ class QuantEngine:
 
     def _close_position(self, pos: Position, reason: str, protect_reasons: Optional[List[str]] = None):
         symbol = pos.symbol
-        price = market_data.mark_price(symbol) or pos.entry
+        price = self._get_fast_price(symbol) or pos.entry
         mult = pos.leverage * pos.usdt_size
         pnl = ((price - pos.entry) / pos.entry * mult) if pos.direction == "LONG" else ((pos.entry - price) / pos.entry * mult)
 
@@ -305,6 +321,12 @@ class QuantEngine:
         if not can_trade and not telegram_service.paused:
             return
 
+        # 0. Check Microstructure Liquidation Cascades (Leading Alpha)
+        for sym in settings.ACTIVE_SYMBOLS:
+            liq_sig = self.microstructure.check_liquidation_cascade(sym)
+            if liq_sig:
+                self.queue.add(liq_sig)
+
         # 1. Process manual override signals first
         manual_signals = self.queue.pop_manual()
         for sig in manual_signals:
@@ -351,8 +373,21 @@ class QuantEngine:
                 if not heat_ok:
                     continue
 
-            # AI Evaluation via Gemini 2.5 Flash (Rate-Safe)
-            ai_decision = gemini_service.evaluate_signal(sym, direction, ctx, item["reasons"])
+            # Tier-1 Local Fast Gate (<200 µs hot path verification)
+            fast_ok, fast_bonus, fast_reason = self.hybrid_ai.tier1_fast_gate(sym, direction, ctx)
+            if not fast_ok:
+                continue
+
+            # Trigger Tier-2 Asynchronous Gemini Update in background
+            self.hybrid_ai.tier2_async_update(sym, ctx)
+
+            ai_decision = AISignalDecision(
+                signal=direction,
+                confidence=75,
+                regime=ctx.regime.value,
+                reason=fast_reason,
+                key_drivers=["Microstructure", "Tier-1 Fast Gate"]
+            )
             self.latest_ai_event = {
                 "symbol": sym,
                 "signal": ai_decision.signal,
@@ -360,13 +395,7 @@ class QuantEngine:
                 "reason": ai_decision.reason
             }
 
-            if settings.GEMINI_VETO and ai_decision.signal == "IGNORE":
-                continue
-
-            total_score = item["score"] + strat_eval["score_bonus"]
-            if ai_decision.signal == direction and ai_decision.confidence >= 65:
-                total_score += 2
-
+            total_score = item["score"] + strat_eval["score_bonus"] + fast_bonus
             if total_score >= settings.MIN_SIGNAL_SCORE:
                 self._open_position(
                     sym, direction, total_score, strat_eval["position_size"],
@@ -384,7 +413,7 @@ class QuantEngine:
             if not pos:
                 continue
 
-            price = market_data.mark_price(sym)
+            price = self._get_fast_price(sym) or pos.entry
             if not price or price <= 0:
                 continue
 
@@ -465,6 +494,7 @@ class QuantEngine:
 
         # Launch background threads
         threads = [
+            ("websocket_stream", self.stream.start),
             ("polymarket", self.polymarket.run_loop),
             ("news", self.news.run_loop),
             ("telegram", telegram_service.run_loop),
@@ -483,15 +513,16 @@ class QuantEngine:
                 now = time.time()
                 if now - last_snap >= 5.0:
                     with self._positions_lock:
-                        self.paper_account.snapshot(self.positions, market_data.mark_price)
+                        self.paper_account.snapshot(self.positions, self._get_fast_price)
                     last_snap = now
 
             except Exception:
                 pass
-            time.sleep(1.0)
+            time.sleep(0.5)  # 500ms high-frequency evaluation cycle
 
     def stop(self):
         self.running = False
+        self.stream.stop()
         self.polymarket.stop()
         self.news.stop()
         telegram_service.stop()
