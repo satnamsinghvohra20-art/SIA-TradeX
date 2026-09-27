@@ -1,0 +1,6 @@
+python-binance>=1.0.19
+requests>=2.31.0
+python-dotenv>=1.0.0
+colorama>=0.4.6
+google-generativeai>=0.5.0  # actually imported and used (GeminiEngine)
+                             # anthropic removed (unused)

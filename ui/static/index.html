@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SIA-TradeX Pro | Autonomous AI Quant Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #07090e;
+      --card-bg: rgba(16, 21, 33, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent-green: #00f2aa;
+      --accent-red: #ff3b69;
+      --accent-cyan: #00d8f6;
+      --accent-purple: #9d4edd;
+      --text-main: #f0f4f8;
+      --text-dim: #7f8fa4;
+      --glow-green: 0 0 20px rgba(0, 242, 170, 0.35);
+      --glow-red: 0 0 20px rgba(255, 59, 105, 0.35);
+      --glow-cyan: 0 0 20px rgba(0, 216, 246, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(0, 216, 246, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(157, 78, 221, 0.05) 0%, transparent 40%);
+      color: var(--text-main);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      padding: 20px;
+    }
+
+    /* Header Nav */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 24px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      backdrop-filter: blur(16px);
+      margin-bottom: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-logo {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #07090e;
+      font-size: 20px;
+      box-shadow: var(--glow-cyan);
+    }
+
+    .brand-title h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .brand-title span {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .status-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .badge {
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge-live {
+      background: rgba(255, 59, 105, 0.15);
+      border: 1px solid var(--accent-red);
+      color: var(--accent-red);
+      box-shadow: var(--glow-red);
+    }
+
+    .badge-paper {
+      background: rgba(0, 242, 170, 0.15);
+      border: 1px solid var(--accent-green);
+      color: var(--accent-green);
+      box-shadow: var(--glow-green);
+    }
+
+    .badge-regime {
+      background: rgba(0, 216, 246, 0.15);
+      border: 1px solid var(--accent-cyan);
+      color: var(--accent-cyan);
+    }
+
+    .panic-btn {
+      background: linear-gradient(135deg, #ff1a40, #b3001e);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 14px rgba(255, 26, 64, 0.4);
+    }
+
+    .panic-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(255, 26, 64, 0.6);
+    }
+
+    /* Metric Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .kpi-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      padding: 20px;
+      border-radius: 16px;
+      backdrop-filter: blur(12px);
+      transition: transform 0.2s ease;
+    }
+
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .kpi-label {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .kpi-value {
+      font-size: 26px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: -0.5px;
+    }
+
+    .val-positive { color: var(--accent-green); }
+    .val-negative { color: var(--accent-red); }
+    .val-cyan     { color: var(--accent-cyan); }
+
+    /* Layout Split */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 2.2fr 1fr;
+      gap: 20px;
+    }
+
+    @media (max-width: 1024px) {
+      .main-grid { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 20px;
+      backdrop-filter: blur(12px);
+      margin-bottom: 20px;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      padding: 12px 14px;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--card-border);
+      font-weight: 500;
+    }
+
+    td {
+      padding: 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .tag-long {
+      background: rgba(0, 242, 170, 0.15);
+      color: var(--accent-green);
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    .tag-short {
+      background: rgba(255, 59, 105, 0.15);
+      color: var(--accent-red);
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    .close-btn {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: var(--text-main);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .close-btn:hover {
+      border-color: var(--accent-red);
+      color: var(--accent-red);
+    }
+
+    /* AI Feed & Signals */
+    .ai-card {
+      background: rgba(157, 78, 221, 0.08);
+      border: 1px solid rgba(157, 78, 221, 0.25);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .ai-card-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .ai-reason {
+      font-size: 12px;
+      color: #c9d1d9;
+      line-height: 1.5;
+    }
+
+    /* Terminal Log */
+    .term-box {
+      background: #040609;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      padding: 12px;
+      height: 240px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #8b949e;
+      line-height: 1.6;
+    }
+
+    .term-line {
+      margin-bottom: 4px;
+    }
+
+    .term-highlight { color: var(--accent-cyan); }
+    .term-success { color: var(--accent-green); }
+    .term-warn { color: #f9cb42; }
+
+    /* Quick Action Form */
+    .trade-form {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .trade-input, .trade-select {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+    }
+
+    .trade-btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .btn-buy { background: var(--accent-green); color: #000; }
+    .btn-sell { background: var(--accent-red); color: #fff; }
+    .trade-btn:hover { opacity: 0.85; }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">S</div>
+      <div class="brand-title">
+        <h1>SIA-TradeX Pro</h1>
+        <span>AUTONOMOUS QUANT ENGINE v2.0</span>
+      </div>
+    </div>
+
+    <div class="status-group">
+      <div id="modeBadge" class="badge badge-paper">● PAPER MODE</div>
+      <div id="regimeBadge" class="badge badge-regime">REGIME: DETECTING...</div>
+      <button id="panicButton" class="panic-btn" onclick="triggerPanic()">
+        🚨 EMERGENCY CLOSE ALL
+      </button>
+    </div>
+  </header>
+
+  <!-- Metric KPIs -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">TOTAL EQUITY</div>
+      <div id="metricEquity" class="kpi-value val-cyan">$1,000.00</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">TODAY'S NET P&L</div>
+      <div id="metricPnl" class="kpi-value val-positive">+$0.00</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">WIN RATE</div>
+      <div id="metricWinRate" class="kpi-value">0.0%</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">OPEN TRADES / HEAT</div>
+      <div id="metricHeat" class="kpi-value">0 / 6 (0%)</div>
+    </div>
+  </div>
+
+  <!-- Main Workspaces -->
+  <div class="main-grid">
+    <!-- Left Workspace: Positions & Execution Panel -->
+    <div>
+      <div class="panel">
+        <div class="panel-title">
+          <span>Active Futures Positions</span>
+          <span id="posCount" style="font-size: 12px; color: var(--text-dim);">0 Open</span>
+        </div>
+        <div style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Entry</th>
+                <th>Mark Price</th>
+                <th>P&L (USDT)</th>
+                <th>TP / SL</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="positionsTableBody">
+              <tr>
+                <td colspan="7" style="text-align: center; color: var(--text-dim); padding: 30px;">
+                  No active positions. Scanning multi-factor confluence...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">
+          <span>Manual Confluence Trigger</span>
+          <span style="font-size: 12px; color: var(--text-dim);">Bypasses queue, checks confluence gates</span>
+        </div>
+        <div class="trade-form">
+          <select id="tradeSymbol" class="trade-select">
+            <option value="BTCUSDT">BTCUSDT</option>
+            <option value="ETHUSDT">ETHUSDT</option>
+            <option value="SOLUSDT">SOLUSDT</option>
+            <option value="LINKUSDT">LINKUSDT</option>
+            <option value="DOGEUSDT">DOGEUSDT</option>
+            <option value="AVAXUSDT">AVAXUSDT</option>
+            <option value="ADAUSDT">ADAUSDT</option>
+          </select>
+          <input id="tradeSize" type="number" class="trade-input" placeholder="Size (USDT, e.g. 20)" value="20" style="width: 140px;">
+          <button class="trade-btn btn-buy" onclick="submitManualTrade('LONG')">LONG BUY</button>
+          <button class="trade-btn btn-sell" onclick="submitManualTrade('SHORT')">SHORT SELL</button>
+        </div>
+      </div>
+
+      <!-- Real-time Terminal Log -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>System Execution Telemetry</span>
+          <span style="font-size: 11px; color: var(--text-dim);">WebSocket Live Stream</span>
+        </div>
+        <div id="termLog" class="term-box">
+          <div class="term-line term-highlight">[SYSTEM] SIA-TradeX Pro Engine initialized. Connected to telemetry.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Workspace: AI Verdicts & News Feed -->
+    <div>
+      <div class="panel">
+        <div class="panel-title">
+          <span>Gemini AI Intelligence</span>
+          <span style="font-size: 11px; color: var(--accent-purple);">gemini-2.5-flash</span>
+        </div>
+        <div id="aiFeedContainer">
+          <div class="ai-card">
+            <div class="ai-card-header">
+              <span style="color: var(--accent-cyan);">Autonomous Scanner</span>
+              <span>100% Rate Safe</span>
+            </div>
+            <div class="ai-reason">
+              Token-bucket pacing active. Multi-timeframe trend, funding rate, and microstructure evaluated.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">
+          <span>Recent Journal Trades</span>
+          <span style="font-size: 11px; color: var(--text-dim);">Persistent SQLite DB</span>
+        </div>
+        <div id="journalContainer" style="font-size: 12px; font-family: 'JetBrains Mono', monospace;">
+          <div style="color: var(--text-dim); text-align: center; padding: 20px;">
+            Awaiting completed closed trades.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // WebSocket Client
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    let ws;
+
+    function connectWs() {
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        logTerm("WebSocket connected to telemetry.", "success");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          updateDashboard(data);
+        } catch (e) {
+          console.error("Failed to parse telemetry:", e);
+        }
+      };
+
+      ws.onclose = () => {
+        logTerm("WebSocket disconnected. Reconnecting in 3s...", "warn");
+        setTimeout(connectWs, 3000);
+      };
+    }
+
+    function updateDashboard(state) {
+      // 1. Badges & Mode
+      const modeBadge = document.getElementById("modeBadge");
+      if (state.live_mode) {
+        modeBadge.className = "badge badge-live";
+        modeBadge.innerText = "● LIVE TRADING";
+      } else {
+        modeBadge.className = "badge badge-paper";
+        modeBadge.innerText = "● PAPER MODE";
+      }
+
+      if (state.regime) {
+        const regimeBadge = document.getElementById("regimeBadge");
+        regimeBadge.innerText = `REGIME: ${state.regime}`;
+      }
+
+      // 2. Metrics
+      document.getElementById("metricEquity").innerText = `$${state.equity.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      
+      const pnlEl = document.getElementById("metricPnl");
+      pnlEl.innerText = `${state.daily_pnl >= 0 ? '+' : ''}$${state.daily_pnl.toFixed(2)}`;
+      pnlEl.className = `kpi-value ${state.daily_pnl >= 0 ? 'val-positive' : 'val-negative'}`;
+
+      document.getElementById("metricWinRate").innerText = `${state.win_rate.toFixed(1)}% (${state.wins}W / ${state.losses}L)`;
+      
+      const heatPct = Math.round(state.portfolio_heat * 100);
+      document.getElementById("metricHeat").innerText = `${state.positions_count} / ${state.max_positions} (${heatPct}%)`;
+
+      // 3. Active Positions
+      const tbody = document.getElementById("positionsTableBody");
+      document.getElementById("posCount").innerText = `${state.positions.length} Open`;
+
+      if (!state.positions || state.positions.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 30px;">No active positions. Scanning multi-factor confluence...</td></tr>`;
+      } else {
+        tbody.innerHTML = state.positions.map(p => {
+          const pnlClass = p.pnl >= 0 ? 'val-positive' : 'val-negative';
+          const pnlStr = `${p.pnl >= 0 ? '+' : ''}$${p.pnl.toFixed(2)}`;
+          const sideClass = p.direction === 'LONG' ? 'tag-long' : 'tag-short';
+          return `
+            <tr>
+              <td><b>${p.symbol}</b></td>
+              <td><span class="${sideClass}">${p.direction}</span></td>
+              <td>$${p.entry.toFixed(4)}</td>
+              <td>$${p.current_price.toFixed(4)}</td>
+              <td class="${pnlClass}"><b>${pnlStr}</b></td>
+              <td>$${p.tp2.toFixed(4)} / $${p.sl.toFixed(4)}</td>
+              <td>
+                <button class="close-btn" onclick="closePosition('${p.symbol}')">CLOSE</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      // 4. AI Feed
+      if (state.latest_ai_event) {
+        const aiContainer = document.getElementById("aiFeedContainer");
+        const ev = state.latest_ai_event;
+        aiContainer.innerHTML = `
+          <div class="ai-card">
+            <div class="ai-card-header">
+              <span style="color: var(--accent-cyan);">${ev.symbol} ${ev.signal}</span>
+              <span style="color: var(--accent-green);">${ev.confidence}% Conf</span>
+            </div>
+            <div class="ai-reason">
+              ${ev.reason}
+            </div>
+          </div>
+        ` + aiContainer.innerHTML.slice(0, 800);
+      }
+    }
+
+    function logTerm(msg, type="info") {
+      const box = document.getElementById("termLog");
+      const d = new Date().toLocaleTimeString();
+      let colorClass = "";
+      if (type === "success") colorClass = "term-success";
+      if (type === "warn") colorClass = "term-warn";
+      if (type === "highlight") colorClass = "term-highlight";
+
+      const line = document.createElement("div");
+      line.className = `term-line ${colorClass}`;
+      line.innerText = `[${d}] ${msg}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function triggerPanic() {
+      if (confirm("Are you sure you want to EMERGENCY CLOSE ALL positions at market price?")) {
+        fetch("/api/panic", { method: "POST" })
+          .then(r => r.json())
+          .then(d => {
+            logTerm("PANIC EXECUTED: All positions closed.", "warn");
+          })
+          .catch(e => logTerm("Panic failed: " + e, "warn"));
+      }
+    }
+
+    function closePosition(symbol) {
+      fetch(`/api/close?symbol=${symbol}`, { method: "POST" })
+        .then(r => r.json())
+        .then(d => logTerm(`Closed position on ${symbol}`, "highlight"))
+        .catch(e => logTerm(`Close error: ${e}`, "warn"));
+    }
+
+    function submitManualTrade(direction) {
+      const symbol = document.getElementById("tradeSymbol").value;
+      const size = parseFloat(document.getElementById("tradeSize").value) || 20;
+
+      fetch("/api/trade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, direction, size, force: false })
+      })
+      .then(r => r.json())
+      .then(d => {
+        logTerm(`Submitted ${direction} for ${symbol} ($${size})`, "success");
+      })
+      .catch(e => logTerm(`Trade submission error: ${e}`, "warn"));
+    }
+
+    connectWs();
+  </script>
+</body>
+</html>

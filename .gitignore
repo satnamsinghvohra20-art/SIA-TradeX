@@ -1,0 +1,10 @@
+.env
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+signal_bot.log
+bot_state.json
+paper_equity.json
+journal_*.json
