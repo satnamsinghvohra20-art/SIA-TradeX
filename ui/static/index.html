@@ -123,6 +123,96 @@
       color: var(--accent-cyan);
     }
 
+    .badge-realdata {
+      background: rgba(0, 216, 246, 0.15);
+      border: 1px solid var(--accent-cyan);
+      color: var(--accent-cyan);
+      box-shadow: var(--glow-cyan);
+    }
+
+    .ai-toggle-btn {
+      background: linear-gradient(135deg, rgba(0, 242, 170, 0.25), rgba(0, 216, 246, 0.25));
+      border: 1px solid var(--accent-green);
+      color: var(--accent-green);
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.25s ease;
+      box-shadow: var(--glow-green);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .ai-toggle-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 0 25px rgba(0, 242, 170, 0.6);
+    }
+
+    .ai-toggle-btn.paused {
+      background: linear-gradient(135deg, rgba(249, 203, 66, 0.2), rgba(255, 140, 0, 0.2));
+      border: 1px solid #f9cb42;
+      color: #f9cb42;
+      box-shadow: 0 0 16px rgba(249, 203, 66, 0.4);
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 8px currentColor;
+      display: inline-block;
+      animation: pulseAnim 1.5s infinite;
+    }
+
+    @keyframes pulseAnim {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.8); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    /* Live Ticker Strip */
+    .ticker-strip {
+      display: flex;
+      gap: 12px;
+      overflow-x: auto;
+      padding: 12px 18px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      backdrop-filter: blur(12px);
+      margin-bottom: 24px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      scrollbar-width: thin;
+    }
+
+    .ticker-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      white-space: nowrap;
+      transition: background 0.3s;
+    }
+
+    .ticker-name {
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+
+    .ticker-price {
+      color: #fff;
+      font-weight: 700;
+    }
+
     .panic-btn {
       background: linear-gradient(135deg, #ff1a40, #b3001e);
       color: #fff;
@@ -361,13 +451,30 @@
     </div>
 
     <div class="status-group">
-      <div id="modeBadge" class="badge badge-paper">● PAPER MODE</div>
+      <div id="dataFeedBadge" class="badge badge-realdata">
+        <span class="pulse-dot"></span> LIVE REAL MARKET DATA (Binance Mainnet)
+      </div>
+      <div id="modeBadge" class="badge badge-paper">● REAL PAPER TRADES</div>
       <div id="regimeBadge" class="badge badge-regime">REGIME: DETECTING...</div>
+      <button id="aiToggleButton" class="ai-toggle-btn" onclick="toggleAiTrading()">
+        <span class="pulse-dot"></span> <span id="aiBtnText">AI AUTO-TRADER: ACTIVE</span>
+      </button>
       <button id="panicButton" class="panic-btn" onclick="triggerPanic()">
         🚨 EMERGENCY CLOSE ALL
       </button>
     </div>
   </header>
+
+  <!-- Live Binance Mainnet Market Price Ticker Strip -->
+  <div id="tickerStrip" class="ticker-strip">
+    <div class="ticker-item"><span class="ticker-name">BTC:</span> <span class="ticker-price" id="tick-BTCUSDT">Streaming...</span></div>
+    <div class="ticker-item"><span class="ticker-name">ETH:</span> <span class="ticker-price" id="tick-ETHUSDT">Streaming...</span></div>
+    <div class="ticker-item"><span class="ticker-name">SOL:</span> <span class="ticker-price" id="tick-SOLUSDT">Streaming...</span></div>
+    <div class="ticker-item"><span class="ticker-name">LINK:</span> <span class="ticker-price" id="tick-LINKUSDT">Streaming...</span></div>
+    <div class="ticker-item"><span class="ticker-name">DOGE:</span> <span class="ticker-price" id="tick-DOGEUSDT">Streaming...</span></div>
+    <div class="ticker-item"><span class="ticker-name">AVAX:</span> <span class="ticker-price" id="tick-AVAXUSDT">Streaming...</span></div>
+    <div class="ticker-item"><span class="ticker-name">ADA:</span> <span class="ticker-price" id="tick-ADAUSDT">Streaming...</span></div>
+  </div>
 
   <!-- Metric KPIs -->
   <div class="kpi-grid">
@@ -517,20 +624,64 @@
       };
     }
 
+    let aiActive = true;
+
+    function toggleAiTrading() {
+      fetch("/api/ai/toggle", { method: "POST" })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === "ok") {
+            updateAiButtonUI(data.ai_trading_active);
+            logTerm(`AI Auto-Pilot is now: ${data.ai_trading_active ? 'ACTIVE' : 'PAUSED'}`, data.ai_trading_active ? 'success' : 'warn');
+          }
+        })
+        .catch(err => logTerm("AI Toggle error: " + err, "warn"));
+    }
+
+    function updateAiButtonUI(active) {
+      aiActive = active;
+      const btn = document.getElementById("aiToggleButton");
+      const text = document.getElementById("aiBtnText");
+      if (btn && text) {
+        if (active) {
+          btn.className = "ai-toggle-btn";
+          text.innerText = "AI AUTO-TRADER: ACTIVE";
+        } else {
+          btn.className = "ai-toggle-btn paused";
+          text.innerText = "AI AUTO-TRADER: PAUSED";
+        }
+      }
+    }
+
     function updateDashboard(state) {
       // 1. Badges & Mode
       const modeBadge = document.getElementById("modeBadge");
       if (state.live_mode) {
         modeBadge.className = "badge badge-live";
-        modeBadge.innerText = "● LIVE TRADING";
+        modeBadge.innerText = "● LIVE TRADING (REAL FUNDS)";
       } else {
         modeBadge.className = "badge badge-paper";
-        modeBadge.innerText = "● PAPER MODE";
+        modeBadge.innerText = "● REAL PAPER TRADES";
       }
 
       if (state.regime) {
         const regimeBadge = document.getElementById("regimeBadge");
         regimeBadge.innerText = `REGIME: ${state.regime}`;
+      }
+
+      // Synchronize AI button state
+      if (state.ai_trading_active !== undefined && state.ai_trading_active !== aiActive) {
+        updateAiButtonUI(state.ai_trading_active);
+      }
+
+      // Update Live Real Market Prices Strip
+      if (state.ticker_prices) {
+        for (const [sym, price] of Object.entries(state.ticker_prices)) {
+          const el = document.getElementById(`tick-${sym}`);
+          if (el && price) {
+            el.innerText = `$${Number(price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 4})}`;
+          }
+        }
       }
 
       // 2. Metrics
@@ -639,7 +790,39 @@
       .catch(e => logTerm(`Trade submission error: ${e}`, "warn"));
     }
 
+    function fetchRecentTrades() {
+      fetch("/api/trades")
+        .then(r => r.json())
+        .then(trades => {
+          const container = document.getElementById("journalContainer");
+          if (!trades || trades.length === 0) {
+            container.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px;">Awaiting completed closed trades.</div>';
+            return;
+          }
+          container.innerHTML = trades.slice(0, 10).map(t => {
+            const pnlClass = t.pnl >= 0 ? "val-positive" : "val-negative";
+            const sign = t.pnl >= 0 ? "+" : "";
+            return `
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <div>
+                  <b>${t.symbol}</b> <span style="font-size: 10px; color: ${t.direction === 'LONG' ? 'var(--accent-green)' : 'var(--accent-red)'}">${t.direction}</span>
+                  <div style="font-size: 10px; color: var(--text-dim);">${t.reason || 'Auto Exit'}</div>
+                </div>
+                <div style="text-align: right;">
+                  <b class="${pnlClass}">${sign}$${Number(t.pnl).toFixed(2)}</b>
+                  <div style="font-size: 10px; color: var(--text-dim);">${(t.timestamp || '').slice(11)}</div>
+                </div>
+              </div>
+            `;
+          }).join("");
+        })
+        .catch(() => {});
+    }
+
     connectWs();
+    setInterval(fetchRecentTrades, 4000);
+    fetchRecentTrades();
   </script>
 </body>
 </html>
+

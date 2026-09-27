@@ -22,7 +22,8 @@ class MarketData:
         })
         self._cache_lock = threading.Lock()
         self._cache: Dict[str, Tuple[Any, float]] = {}
-        self._base = settings.BINANCE_FAPI_TEST if settings.BINANCE_TESTNET else settings.BINANCE_FAPI_MAIN
+        # Always connect to Binance Futures Mainnet for real live market data & prices
+        self._base = settings.BINANCE_FAPI_MAIN
 
     def _get(self, path: str, params: Optional[Dict[str, Any]] = None, timeout: float = 6.0, cache_ttl: float = 2.0) -> Any:
         key = path + str(sorted((params or {}).items()))

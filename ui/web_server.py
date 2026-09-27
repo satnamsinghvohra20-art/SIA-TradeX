@@ -57,6 +57,21 @@ async def get_index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.on_event("startup")
+async def start_broadcaster():
+    async def _broadcaster():
+        while True:
+            try:
+                if engine_ref and manager.active_connections:
+                    snap = engine_ref.get_dashboard_snapshot()
+                    await manager.broadcast(snap)
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+
+    asyncio.create_task(_broadcaster())
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
@@ -70,6 +85,45 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
     except Exception:
         manager.disconnect(websocket)
+
+
+@app.post("/api/ai/toggle")
+async def toggle_ai():
+    """Toggles AI autonomous trading on or off."""
+    if engine_ref:
+        active = engine_ref.toggle_ai_trading()
+        # Broadcast immediately to all connected web clients
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
+        return {"status": "ok", "ai_trading_active": active, "message": f"AI Autonomous Trading is now {'ACTIVE' if active else 'PAUSED'}"}
+    return {"status": "error", "message": "Engine not attached"}
+
+
+@app.post("/api/ai/start")
+async def start_ai():
+    """Activates AI autonomous trading."""
+    if engine_ref:
+        active = engine_ref.set_ai_trading(True)
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
+        return {"status": "ok", "ai_trading_active": True, "message": "AI Autonomous Trading activated"}
+    return {"status": "error", "message": "Engine not attached"}
+
+
+@app.post("/api/ai/stop")
+async def stop_ai():
+    """Pauses AI autonomous trading."""
+    if engine_ref:
+        active = engine_ref.set_ai_trading(False)
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
+        return {"status": "ok", "ai_trading_active": False, "message": "AI Autonomous Trading paused"}
+    return {"status": "error", "message": "Engine not attached"}
+
+
+@app.get("/api/ai/status")
+async def get_ai_status():
+    """Returns whether AI autonomous trading is currently active."""
+    if engine_ref:
+        return {"status": "ok", "ai_trading_active": engine_ref.ai_trading_active}
+    return {"status": "error", "message": "Engine not attached"}
 
 
 @app.post("/api/panic")

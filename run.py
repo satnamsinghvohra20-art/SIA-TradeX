@@ -29,8 +29,8 @@ G = Fore.GREEN; R = Fore.RED; Y = Fore.YELLOW; C = Fore.CYAN; W = Fore.WHITE; RS
 
 
 def print_banner(live_mode: bool, web_enabled: bool, port: int):
-    mode_text = f"{R}{BR}LIVE BINANCE FUTURES{RST}" if live_mode else f"{G}{BR}PAPER SIMULATOR (Risk-Free){RST}"
-    net_text = f"{Y}TESTNET{RST}" if settings.BINANCE_TESTNET else f"{R}MAINNET{RST}"
+    mode_text = f"{R}{BR}LIVE BINANCE FUTURES (Real Capital){RST}" if live_mode else f"{G}{BR}REAL PAPER TRADES (Risk-Free Simulation){RST}"
+    feed_text = f"{C}{BR}100% REAL LIVE MARKET DATA (Binance Futures Mainnet){RST}"
     ai_status = f"{G}ONLINE ({settings.GEMINI_MODEL}){RST}" if settings.GEMINI_API_KEY else f"{R}NO KEY{RST}"
     web_status = f"{C}http://localhost:{port}{RST}" if web_enabled else f"{Y}Disabled{RST}"
 
@@ -40,10 +40,10 @@ def print_banner(live_mode: bool, web_enabled: bool, port: int):
   Institutional-Grade Multi-Source Fusion & Regime Detection
 {C}======================================================================{RST}
   Execution Mode  : {mode_text}
-  Binance Network : {net_text}
-  AI Engine       : {ai_status}
+  Data Feed       : {feed_text}
+  AI Auto-Pilot   : {ai_status}
   Web Dashboard   : {web_status}
-  Leverage / Sizing: {settings.DEFAULT_LEVERAGE}x  |  {settings.RISK_PER_TRADE_PCT}% risk/trade
+  Leverage / Risk : {settings.DEFAULT_LEVERAGE}x  |  {settings.RISK_PER_TRADE_PCT}% risk/trade
   Circuit Breaker : -${settings.DAILY_LOSS_LIMIT:.2f} max daily loss  |  +${settings.DAILY_PROFIT_TARGET:.2f} target
 {C}======================================================================{RST}
 """)

@@ -46,12 +46,23 @@ class BinanceWebSocketStream:
             return (bid + ask) / 2.0
         return bid or ask
 
+    def get_all_prices(self) -> Dict[str, float]:
+        with self._lock:
+            result = {}
+            for sym, data in self._book_tickers.items():
+                bid = data.get("bid")
+                ask = data.get("ask")
+                if bid and ask:
+                    result[sym] = round((bid + ask) / 2.0, 4)
+            return result
+
     def _build_stream_url(self) -> str:
         # Multiplex bookTicker for all active symbols + forceOrder liquidation stream
         streams = [f"{s}@bookTicker" for s in self.symbols]
         streams.append("!forceOrder@arr")
         stream_path = "/".join(streams)
-        base = "wss://stream.binancefuture.com/stream?streams=" if self.testnet else "wss://fstream.binance.com/stream?streams="
+        # Always connect to Binance Mainnet for real live ticks and liquidation cascades
+        base = "wss://fstream.binance.com/stream?streams="
         return f"{base}{stream_path}"
 
     async def _stream_loop(self):

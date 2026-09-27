@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     BINANCE_API_KEY: str = Field(default_factory=lambda: os.getenv("BINANCE_API_KEY", ""))
     BINANCE_API_SECRET: str = Field(default_factory=lambda: os.getenv("BINANCE_API_SECRET", ""))
     BINANCE_TESTNET: bool = Field(
-        default_factory=lambda: os.getenv("BINANCE_TESTNET", "true").strip().lower() in ("true", "1", "yes")
+        default_factory=lambda: os.getenv("BINANCE_TESTNET", "false").strip().lower() in ("true", "1", "yes")
     )
     BINANCE_FAPI_MAIN: str = "https://fapi.binance.com"
     BINANCE_FAPI_TEST: str = "https://testnet.binancefuture.com"

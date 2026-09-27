@@ -42,6 +42,7 @@ class QuantEngine:
         self.positions: Dict[str, Position] = {}
         self._positions_lock = threading.Lock()
         self.latest_ai_event: Optional[Dict[str, Any]] = None
+        self.ai_trading_active: bool = True
 
         # Core subsystems
         self.queue = SignalQueue()
@@ -72,6 +73,14 @@ class QuantEngine:
 
         # Link engine reference to FastAPI
         set_engine(self)
+
+    def toggle_ai_trading(self) -> bool:
+        self.ai_trading_active = not self.ai_trading_active
+        return self.ai_trading_active
+
+    def set_ai_trading(self, active: bool) -> bool:
+        self.ai_trading_active = active
+        return self.ai_trading_active
 
     def get_equity(self) -> float:
         if self.live_mode:
@@ -116,6 +125,7 @@ class QuantEngine:
 
         return {
             "live_mode": self.live_mode,
+            "ai_trading_active": self.ai_trading_active,
             "equity": round(equity, 2),
             "daily_pnl": metrics["pnl"],
             "wins": metrics["wins"],
@@ -126,6 +136,8 @@ class QuantEngine:
             "portfolio_heat": round(current_heat, 2),
             "regime": btc_ctx.regime.value if btc_ctx else "UNKNOWN",
             "positions": pos_list,
+            "ticker_prices": self.stream.get_all_prices(),
+            "recent_liquidations": self.stream.recent_liquidations[-8:] if self.stream.recent_liquidations else [],
             "latest_ai_event": self.latest_ai_event,
             "timestamp": datetime.now().strftime("%H:%M:%S")
         }
@@ -340,8 +352,11 @@ class QuantEngine:
                 [sig.reason], [sig.source], ai_decision, ctx
             )
 
-        # 2. Process automated confluence signals
+        # 2. Process automated confluence signals (only when AI trading is active)
         merged_signals = self.queue.flush_merged()
+        if not self.ai_trading_active:
+            return
+
         for item in merged_signals:
             sym = item["symbol"]
             direction = item["direction"]
@@ -505,6 +520,9 @@ class QuantEngine:
         """Continuous high-frequency quant scalper scanning 5m microstructure every 6 seconds."""
         idx = 0
         while self.running:
+            if not self.ai_trading_active:
+                time.sleep(1.0)
+                continue
             try:
                 sym = settings.ACTIVE_SYMBOLS[idx % len(settings.ACTIVE_SYMBOLS)]
                 idx += 1
@@ -545,6 +563,9 @@ class QuantEngine:
         """Rotates through active symbols periodically to detect AI setups."""
         idx = 0
         while self.running:
+            if not self.ai_trading_active:
+                time.sleep(1.0)
+                continue
             try:
                 sym = settings.ACTIVE_SYMBOLS[idx % len(settings.ACTIVE_SYMBOLS)]
                 idx += 1
