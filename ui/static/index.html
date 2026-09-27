@@ -523,7 +523,10 @@
       <div id="dataFeedBadge" class="badge badge-realdata">
         <span class="pulse-dot"></span> 100% REAL LIVE DATA (Binance Mainnet)
       </div>
-      <div id="modeBadge" class="badge badge-paper">● REAL-TIME QUANT ENGINE</div>
+      <div id="modeBadge" class="badge badge-paper" onclick="toggleTradingMode()" style="cursor: pointer;" title="Click to toggle between LIVE Binance Orders and Paper Simulation">● MODE: PAPER SIMULATION</div>
+      <div id="geminiBadge" class="badge" onclick="rotateGeminiKey()" style="background: rgba(255, 0, 128, 0.15); border: 1px solid #ff007f; color: #ff77bc; cursor: pointer;" title="Click to rotate to next Gemini API key in pool">
+        <span class="pulse-dot" style="background: #ff007f;"></span> <span id="geminiKeyText">GEMINI: DISCOVERING...</span>
+      </div>
       <div id="regimeBadge" class="badge badge-regime">REGIME: DETECTING...</div>
       <button id="aiToggleButton" class="ai-toggle-btn" onclick="toggleAiTrading()" title="Toggle autonomous AI scan">
         <span class="pulse-dot"></span> <span id="aiBtnText">AI AUTO-TRADER: ACTIVE</span>
@@ -760,10 +763,20 @@
       const modeBadge = document.getElementById("modeBadge");
       if (state.live_mode) {
         modeBadge.className = "badge badge-live";
-        modeBadge.innerText = "● LIVE BINANCE MAINNET (REAL ORDERS)";
+        modeBadge.innerText = "● LIVE BINANCE MAINNET (CLICK FOR PAPER)";
       } else {
         modeBadge.className = "badge badge-paper";
-        modeBadge.innerText = "● REAL-TIME QUANT ENGINE (ACTIVE)";
+        modeBadge.innerText = "● REAL-TIME PAPER ENGINE (CLICK FOR LIVE)";
+      }
+
+      if (state.gemini_rotator) {
+        const gemEl = document.getElementById("geminiKeyText");
+        if (gemEl) {
+          const tot = state.gemini_rotator.total_keys || 0;
+          const idx = state.gemini_rotator.active_key_index || 1;
+          const rot = state.gemini_rotator.rotations_count || 0;
+          gemEl.innerText = tot > 0 ? `GEMINI: KEY #${idx}/${tot}${rot > 0 ? ` (↺${rot})` : ''}` : `GEMINI: NO KEYS`;
+        }
       }
 
       if (state.regime) {
@@ -865,6 +878,28 @@
       line.innerText = `[${d}] ${msg}`;
       box.appendChild(line);
       box.scrollTop = box.scrollHeight;
+    }
+
+    function toggleTradingMode() {
+      logTerm("🔄 Requesting Trading Mode Toggle...", "highlight");
+      fetch("/api/mode/toggle", { method: "POST" })
+        .then(r => r.json())
+        .then(d => {
+          logTerm(d.message || "Mode updated.", d.live_mode ? "warn" : "success");
+          refreshState();
+        })
+        .catch(e => logTerm("Mode toggle error: " + e, "warn"));
+    }
+
+    function rotateGeminiKey() {
+      logTerm("🔄 Rotating to next Gemini API Key in pool...", "highlight");
+      fetch("/api/ai/rotate-key", { method: "POST" })
+        .then(r => r.json())
+        .then(d => {
+          logTerm(d.message || "Gemini key rotated.", "success");
+          refreshState();
+        })
+        .catch(e => logTerm("Key rotate error: " + e, "warn"));
     }
 
     function triggerScanNow() {

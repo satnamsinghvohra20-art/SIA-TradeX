@@ -504,27 +504,110 @@ class MarketData:
 
 
 # =============================================================================
-#  CLASS: AIValidator (Multi-Model AI with NewsAPI Context)
+#  CLASS: GeminiKeyRotator (Dynamic Multi-Key Pool with Rate-Limit Auto-Failover)
+# =============================================================================
+class GeminiKeyRotator:
+    """
+    Institutional Multi-Key Pool for Google Gemini API.
+    Automatically discovers all available keys from:
+    - GEMINI_API_KEY (single or comma-separated: key1,key2,key3)
+    - GEMINI_API_KEYS (comma or space separated)
+    - GEMINI_API_KEY_1, GEMINI_API_KEY_2, ..., GEMINI_API_KEY_25
+    When rate limits (HTTP 429 / ResourceExhausted) or auth errors are hit,
+    it automatically rotates to the next available key in the pool and retries.
+    """
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.keys: List[str] = self._discover_keys()
+        self.current_idx: int = 0
+        self.rotation_count: int = 0
+        self.cooldowns: Dict[str, float] = {}
+
+    def _discover_keys(self) -> List[str]:
+        # Always refresh environment from .env file
+        try:
+            load_dotenv(BASE_DIR / ".env", override=False)
+        except Exception:
+            pass
+
+        found: List[str] = []
+        raw_single = os.getenv("GEMINI_API_KEY", "")
+        if raw_single:
+            for k in raw_single.replace(";", ",").replace("\n", ",").split(","):
+                k = k.strip()
+                if k and k not in found and len(k) > 10:
+                    found.append(k)
+
+        raw_multi = os.getenv("GEMINI_API_KEYS", "")
+        if raw_multi:
+            for k in raw_multi.replace(";", ",").replace("\n", ",").split(","):
+                k = k.strip()
+                if k and k not in found and len(k) > 10:
+                    found.append(k)
+
+        for i in range(1, 26):
+            k = os.getenv(f"GEMINI_API_KEY_{i}", "").strip()
+            if k and k not in found and len(k) > 10:
+                found.append(k)
+
+        return found
+
+    def reload_keys(self):
+        with self.lock:
+            self.keys = self._discover_keys()
+
+    def get_active_key(self) -> Optional[str]:
+        with self.lock:
+            if not self.keys:
+                return None
+            return self.keys[self.current_idx % len(self.keys)]
+
+    def rotate(self, reason: str = "Rate Limit / 429") -> Optional[str]:
+        with self.lock:
+            if not self.keys:
+                return None
+            old_idx = self.current_idx % len(self.keys)
+            old_key = self.keys[old_idx]
+            self.cooldowns[old_key] = time.time() + 60.0
+
+            self.current_idx = (self.current_idx + 1) % len(self.keys)
+            self.rotation_count += 1
+            new_key = self.keys[self.current_idx]
+
+            mask_old = old_key[:6] + "..." + old_key[-4:] if len(old_key) > 10 else "***"
+            mask_new = new_key[:6] + "..." + new_key[-4:] if len(new_key) > 10 else "***"
+            print(Fore.YELLOW + f"[🔄 Gemini Key Rotator] Key #{old_idx + 1} ({mask_old}) triggered: {reason}. "
+                                f"Auto-rotated to Key #{self.current_idx + 1}/{len(self.keys)} ({mask_new})." + Style.RESET_ALL)
+            return new_key
+
+    def get_status(self) -> Dict[str, Any]:
+        with self.lock:
+            return {
+                "total_keys": len(self.keys),
+                "active_key_index": (self.current_idx % len(self.keys)) + 1 if self.keys else 0,
+                "rotations_count": self.rotation_count
+            }
+
+
+# =============================================================================
+#  CLASS: AIValidator (Multi-Model AI with NewsAPI Context & Key Rotation)
 # =============================================================================
 class AIValidator:
     """
     Validates trading setups with Gemini 2.5 or OpenAI/TokenLB, injecting NewsAPI context.
+    Features automatic Gemini API key rotation when rate limits (429 / ResourceExhausted) occur.
     Never crashes if API keys are missing or invalid — returns permissive default.
     """
     def __init__(self):
+        self.rotator = GeminiKeyRotator()
+        self.gemini_model = None
         self.gemini_ready = False
         self.openai_ready = False
         self.news_session = requests.Session()
         self.news_cache: List[str] = []
         self.news_last_fetch = 0.0
 
-        if GEMINI_API_KEY and genai:
-            try:
-                genai.configure(api_key=GEMINI_API_KEY)
-                self.gemini_model = genai.GenerativeModel("gemini-2.5-flash")
-                self.gemini_ready = True
-            except Exception:
-                pass
+        self._configure_gemini()
 
         if TOKENLB_API_KEY and OpenAI:
             try:
@@ -532,6 +615,20 @@ class AIValidator:
                 self.openai_ready = True
             except Exception:
                 pass
+
+    def _configure_gemini(self) -> bool:
+        key = self.rotator.get_active_key()
+        if key and genai:
+            try:
+                genai.configure(api_key=key, transport="rest")
+                self.gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+                self.gemini_ready = True
+                return True
+            except Exception:
+                self.gemini_ready = False
+                return False
+        self.gemini_ready = False
+        return False
 
     def fetch_news_headlines(self) -> List[str]:
         now = time.time()
@@ -554,7 +651,7 @@ class AIValidator:
         return self.news_cache
 
     def validate(self, symbol: str, direction: str, poly_question: str, momentum: str, ofi: float) -> Dict[str, Any]:
-        """Returns {confidence: int, reason: str, approved: bool}."""
+        """Returns {confidence: int, reason: str, approved: bool} with auto key rotation."""
         headlines = self.fetch_news_headlines()
         headlines_str = " | ".join(headlines) if headlines else "No major macro breaking alerts."
 
@@ -570,20 +667,40 @@ class AIValidator:
             f'{{"trade": "{direction}", "confidence": 85, "reason": "brief rationale under 100 chars"}}'
         )
 
-        # 1. Try Gemini
-        if self.gemini_ready:
-            try:
-                resp = self.gemini_model.generate_content(prompt)
-                clean_text = resp.text.strip().replace("```json", "").replace("```", "").strip()
-                data = json.loads(clean_text)
-                conf = int(data.get("confidence", 70))
-                return {
-                    "confidence": conf,
-                    "reason": str(data.get("reason", "Gemini AI validated")),
-                    "approved": conf >= 65
-                }
-            except Exception:
-                pass
+        # 1. Try Gemini with auto-rotation on rate limits / quota
+        if self.gemini_ready or self.rotator.keys:
+            attempts = max(1, len(self.rotator.keys))
+            for _ in range(attempts):
+                try:
+                    if not self.gemini_ready or not self.gemini_model:
+                        if not self._configure_gemini():
+                            break
+
+                    resp = self.gemini_model.generate_content(prompt)
+                    clean_text = resp.text.strip().replace("```json", "").replace("```", "").strip()
+                    data = json.loads(clean_text)
+                    conf = int(data.get("confidence", 70))
+                    return {
+                        "confidence": conf,
+                        "reason": str(data.get("reason", "Gemini AI validated")),
+                        "approved": conf >= 65,
+                        "key_index": self.rotator.get_status()["active_key_index"]
+                    }
+                except Exception as e:
+                    err_str = str(e).lower()
+                    is_rate_limit = ("429" in err_str or "quota" in err_str or 
+                                     "resourceexhausted" in err_str or "rate limit" in err_str or
+                                     "too many requests" in err_str)
+                    is_auth = ("unauthenticated" in err_str or "401" in err_str or 
+                               "invalid api-key" in err_str or "access_token_type_unsupported" in err_str)
+
+                    if (is_rate_limit or is_auth) and len(self.rotator.keys) > 1:
+                        reason = "Rate Limit (429)" if is_rate_limit else "Auth Error (401)"
+                        self.rotator.rotate(reason=reason)
+                        self._configure_gemini()
+                        continue
+                    else:
+                        break
 
         # 2. Try OpenAI / TokenLB
         if self.openai_ready:
@@ -1263,8 +1380,24 @@ class PolymarketBinanceBot:
             "positions": pos_list,
             "world_time_utc": self.market.get_world_utc_string(),
             "latest_ai_event": self.latest_ai_event,
-            "recent_trades": self.state.trade_history[-10:]
+            "recent_trades": self.state.trade_history[-10:],
+            "gemini_rotator": self.ai.rotator.get_status()
         }
+
+    def set_live_mode(self, live: bool) -> str:
+        """Dynamically toggles between Real Live Binance Mainnet orders and Paper Simulation."""
+        if live:
+            self.binance.paper_mode = False
+            self.binance._init_client()
+            if not self.binance.client or self.binance.paper_mode:
+                self.paper_mode = True
+                return "Failed to connect to Live Binance (API error -2015). Check API key & Enable Futures permissions. Remaining in PAPER mode."
+            self.paper_mode = False
+            return "Switched to LIVE REAL TRADES on Binance Futures Mainnet."
+        else:
+            self.binance.paper_mode = True
+            self.paper_mode = True
+            return "Switched to REAL-TIME PAPER ENGINE."
 
     def print_terminal_dashboard(self):
         snap = self.get_dashboard_snapshot()
@@ -1274,11 +1407,15 @@ class PolymarketBinanceBot:
         pnl = snap["daily_pnl"]
         pnl_col = Fore.GREEN if pnl >= 0 else Fore.RED
 
+        rot = snap.get("gemini_rotator", {})
+        rot_str = f"Key #{rot.get('active_key_index', 1)}/{rot.get('total_keys', 1)} (Rotations: {rot.get('rotations_count', 0)})" if rot.get("total_keys", 0) > 0 else "No Keys"
+
         print("\n" + "="*70)
         print(f" {Fore.CYAN}SIA-TradeX Pro Dashboard{Style.RESET_ALL} | {snap['world_time_utc']}")
         print(f" Mode: {mode_str}{Style.RESET_ALL} | AI Auto-Trader: {ai_str}{Style.RESET_ALL}")
         print(f" Equity: {Fore.CYAN}${snap['equity']:,.2f}{Style.RESET_ALL} | Realized P&L: {pnl_col}{'+' if pnl>=0 else ''}${pnl:.2f}{Style.RESET_ALL}")
         print(f" Win Rate: {snap['win_rate']}% ({snap['wins']}W / {snap['losses']}L) | Heat: {snap['heat_pct']}% ({snap['positions_count']} Open)")
+        print(f" Gemini Key Pool: {Fore.MAGENTA}{rot_str}{Style.RESET_ALL} | News Context: {Fore.CYAN}ACTIVE{Style.RESET_ALL}")
 
         if snap["positions"]:
             print("-" * 70)
@@ -1530,6 +1667,33 @@ try:
             bot_instance_ref.ai_trading_active = True
             opened = bot_instance_ref.scan_universe_confluence()
             return {"status": "ok", "opened": opened, "message": f"Universe Confluence Scan complete. Opened {opened} position(s)."}
+        return {"error": "Engine not attached"}
+
+    @web_app.post("/api/mode/toggle")
+    async def toggle_trading_mode():
+        if bot_instance_ref:
+            current_live = not bot_instance_ref.paper_mode
+            target_live = not current_live
+            msg = bot_instance_ref.set_live_mode(target_live)
+            return {
+                "status": "ok",
+                "live_mode": not bot_instance_ref.paper_mode,
+                "message": msg
+            }
+        return {"error": "Engine not attached"}
+
+    @web_app.post("/api/ai/rotate-key")
+    async def force_rotate_key():
+        if bot_instance_ref:
+            new_key = bot_instance_ref.ai.rotator.rotate("Manual User Request")
+            bot_instance_ref.ai._configure_gemini()
+            st = bot_instance_ref.ai.rotator.get_status()
+            return {
+                "status": "ok",
+                "active_key_index": st["active_key_index"],
+                "total_keys": st["total_keys"],
+                "message": f"Rotated to Gemini Key #{st['active_key_index']} of {st['total_keys']}"
+            }
         return {"error": "Engine not attached"}
 
     @web_app.post("/api/close")
