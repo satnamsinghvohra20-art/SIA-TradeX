@@ -124,6 +124,9 @@ class QuantEngine:
         btc_ctx = market_data.get_market_context("BTCUSDT")
         current_heat = sum(p["usdt_size"] for p in pos_list) / max(equity, 1.0)
 
+        now_utc = datetime.utcnow()
+        now_local = datetime.now()
+
         return {
             "live_mode": self.live_mode,
             "ai_trading_active": self.ai_trading_active,
@@ -140,7 +143,9 @@ class QuantEngine:
             "ticker_prices": self.stream.get_all_prices(),
             "recent_liquidations": self.stream.recent_liquidations[-8:] if self.stream.recent_liquidations else [],
             "latest_ai_event": self.latest_ai_event,
-            "timestamp": datetime.now().strftime("%H:%M:%S")
+            "world_time_utc": now_utc.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "local_time": now_local.strftime("%H:%M:%S"),
+            "timestamp": now_utc.strftime("%H:%M:%S UTC")
         }
 
     def get_status_text(self) -> str:
@@ -293,10 +298,10 @@ class QuantEngine:
         else:
             self.consecutive_losses = 0
 
-        # Persist trade record
+        # Persist trade record with real world UTC timestamp
         equity = self.get_equity()
         record = TradeRecord(
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
             symbol=symbol,
             direction=pos.direction,
             entry=pos.entry,
@@ -615,7 +620,7 @@ class QuantEngine:
 
             except Exception:
                 pass
-            time.sleep(0.5)  # 500ms high-frequency evaluation cycle
+            time.sleep(0.05)  # 50ms ultra-fast execution cycle (20 checks/second)
 
     def stop(self):
         self.running = False

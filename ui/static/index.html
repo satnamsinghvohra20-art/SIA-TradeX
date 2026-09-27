@@ -451,10 +451,13 @@
     </div>
 
     <div class="status-group">
-      <div id="dataFeedBadge" class="badge badge-realdata">
-        <span class="pulse-dot"></span> LIVE REAL MARKET DATA (Binance Mainnet)
+      <div id="worldClockBadge" class="badge" style="background: rgba(157, 78, 221, 0.15); border: 1px solid var(--accent-purple); color: #d8b4fe;">
+        <span class="pulse-dot"></span> <span id="worldClockText">WORLD UTC: SYNCING...</span>
       </div>
-      <div id="modeBadge" class="badge badge-paper">● REAL PAPER TRADES</div>
+      <div id="dataFeedBadge" class="badge badge-realdata">
+        <span class="pulse-dot"></span> 100% REAL LIVE DATA (Binance Mainnet)
+      </div>
+      <div id="modeBadge" class="badge badge-paper">● REAL-TIME QUANT ENGINE</div>
       <div id="regimeBadge" class="badge badge-regime">REGIME: DETECTING...</div>
       <button id="aiToggleButton" class="ai-toggle-btn" onclick="toggleAiTrading()">
         <span class="pulse-dot"></span> <span id="aiBtnText">AI AUTO-TRADER: ACTIVE</span>
@@ -679,10 +682,10 @@
       const modeBadge = document.getElementById("modeBadge");
       if (state.live_mode) {
         modeBadge.className = "badge badge-live";
-        modeBadge.innerText = "● LIVE TRADING (REAL FUNDS)";
+        modeBadge.innerText = "● LIVE BINANCE MAINNET (REAL ORDERS)";
       } else {
         modeBadge.className = "badge badge-paper";
-        modeBadge.innerText = "● REAL PAPER TRADES";
+        modeBadge.innerText = "● REAL-TIME QUANT ENGINE (ACTIVE)";
       }
 
       if (state.regime) {
@@ -849,7 +852,17 @@
         .catch(() => {});
     }
 
+    function updateWorldClock() {
+      const now = new Date();
+      const utcStr = now.toISOString().slice(11, 19) + ' UTC';
+      const localStr = now.toLocaleTimeString();
+      const el = document.getElementById("worldClockText");
+      if (el) el.innerText = `WORLD: ${utcStr} | LOCAL: ${localStr}`;
+    }
+
     connectWs();
+    setInterval(updateWorldClock, 1000);
+    updateWorldClock();
     setInterval(fetchRecentTrades, 4000);
     fetchRecentTrades();
   </script>

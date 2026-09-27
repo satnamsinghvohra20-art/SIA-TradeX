@@ -67,7 +67,7 @@ async def start_broadcaster():
                     await manager.broadcast(snap)
             except Exception:
                 pass
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
 
     asyncio.create_task(_broadcaster())
 
