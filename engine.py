@@ -32,6 +32,7 @@ from execution.profit_protector import ProfitProtector
 from execution.binance_executor import BinanceExecutor
 from execution.smart_router import SmartOrderRouter
 from ui.telegram_service import telegram_service
+from ui.whatsapp_service import whatsapp_service
 from ui.web_server import set_engine, broadcast_state
 
 logger = logging.getLogger("SIA-TradeX.Engine")
@@ -209,6 +210,7 @@ class QuantEngine:
             return "No positions currently open."
         for pos in open_positions:
             self._close_position(pos, "PANIC / EMERGENCY CLOSE ALL")
+        whatsapp_service.notify_panic(len(open_positions))
         return f"Emergency closed {len(open_positions)} positions."
 
     def stop_ai_and_flatten_all(self) -> str:
@@ -362,8 +364,9 @@ class QuantEngine:
         with self._positions_lock:
             self.positions[new_pos.id] = new_pos
 
-        # Notify via Telegram
+        # Notify via Telegram & WhatsApp (Owner Only)
         telegram_service.notify_trade_open(new_pos, score, ctx.regime.value, ai_decision.reason)
+        whatsapp_service.notify_trade_open(new_pos, score, ctx.regime.value, ai_decision.reason)
 
     def _close_position(self, pos: Position, reason: str, protect_reasons: Optional[List[str]] = None):
         symbol = pos.symbol
@@ -410,9 +413,19 @@ class QuantEngine:
             telegram_service.notify_profit_protect(
                 symbol, pos.direction, pnl, pos.peak_pnl, protect_reasons, equity
             )
+            whatsapp_service.send_owner_alert(
+                f"🛡️ *SIA-TradeX: Capital Protected!* 💖\n\n"
+                f"Satnam ji, position securely closed:\n"
+                f"• Asset: {symbol} ({pos.direction})\n"
+                f"• Realized PnL: {pnl:+,.2f} USDT\n"
+                f"• Protection Reason: {', '.join(protect_reasons)}"
+            )
         else:
             telegram_service.notify_trade_close(
                 symbol, pos.direction, pnl, reason, daily_metrics["pnl"], equity
+            )
+            whatsapp_service.notify_trade_close(
+                symbol, pos.direction, pnl, reason
             )
 
     def _process_signal_batch(self):

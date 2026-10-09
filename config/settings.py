@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str = Field(default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", ""))
     TG_POLL_INTERVAL: float = 2.0
 
+    # WhatsApp Meta Cloud API (Owner Alerts Only)
+    WHATSAPP_PHONE_NUMBER_ID: str = Field(default_factory=lambda: os.getenv("WHATSAPP_PHONE_NUMBER_ID", ""))
+    META_ACCESS_TOKEN: str = Field(default_factory=lambda: os.getenv("META_ACCESS_TOKEN", ""))
+    OWNER_ALERT_PHONE: str = Field(default_factory=lambda: os.getenv("OWNER_ALERT_PHONE", "+918421077613"))
+
     # NewsAPI
     NEWS_API_KEY: str = Field(default_factory=lambda: os.getenv("NEWS_API_KEY", ""))
     NEWS_API_BASE: str = "https://newsapi.org/v2"
