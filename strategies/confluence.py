@@ -102,7 +102,35 @@ class ConfluenceStrategy:
             elif direction == "SHORT" and ctx.order_book_imbalance < -0.12:
                 score_bonus += 1
 
-        # 8. Dynamic Half-Kelly Sizing
+        # 8. TTM Volatility Squeeze Confluence
+        if ctx.squeeze_on:
+            filters["squeeze"] = "ON (Compressed Volatility)"
+            score_bonus -= 1
+        elif ctx.squeeze_momentum is not None:
+            if direction == "LONG" and ctx.squeeze_momentum > 0:
+                score_bonus += 2
+                filters["squeeze"] = "FIRED_BULLISH"
+            elif direction == "SHORT" and ctx.squeeze_momentum < 0:
+                score_bonus += 2
+                filters["squeeze"] = "FIRED_BEARISH"
+
+        # 9. Smart Money Liquidity Sweep (Stop Hunt Absorption)
+        if ctx.liquidity_sweep:
+            filters["liquidity_sweep"] = ctx.liquidity_sweep
+            if direction == "LONG" and ctx.liquidity_sweep == "BULLISH_SWEEP":
+                score_bonus += 3
+            elif direction == "SHORT" and ctx.liquidity_sweep == "BEARISH_SWEEP":
+                score_bonus += 3
+
+        # 10. ADX Trend Strength Filter
+        if ctx.adx is not None:
+            filters["adx"] = ctx.adx
+            if ctx.adx > 25.0:
+                score_bonus += 1
+            elif ctx.adx < 18.0:
+                score_bonus -= 1
+
+        # 11. Dynamic Half-Kelly Sizing
         from execution.risk_manager import risk_manager
         position_size = risk_manager.calculate_kelly_position_size(
             equity=equity,

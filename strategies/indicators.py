@@ -3,7 +3,7 @@ SIA-TradeX: Vectorized Technical Indicators Engine
 Accelerated with C-level NumPy vectorization for microsecond execution.
 """
 
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 import numpy as np
 
 
@@ -159,4 +159,104 @@ class Indicators:
             return "LONG"
         if current_close < min(lows):
             return "SHORT"
+        return None
+
+    @staticmethod
+    def bollinger_bands(closes: List[float], period: int = 20, num_std: float = 2.0) -> Tuple[float, float, float]:
+        """Calculates Bollinger Bands: (upper, mid, lower)."""
+        if not closes or len(closes) < period:
+            c = closes[-1] if closes else 0.0
+            return c, c, c
+        arr = np.asarray(closes[-period:], dtype=np.float64)
+        mid = float(np.mean(arr))
+        std = float(np.std(arr))
+        return mid + (num_std * std), mid, mid - (num_std * std)
+
+    @staticmethod
+    def keltner_channels(candles: List[Dict[str, float]], period: int = 20, mult: float = 1.5) -> Tuple[float, float, float]:
+        """Calculates Keltner Channels: (upper, mid, lower)."""
+        if not candles or len(candles) < period:
+            c = candles[-1]["close"] if candles else 0.0
+            return c, c, c
+        closes = [c["close"] for c in candles]
+        mid = Indicators.ema(closes[-period:], period=period)
+        atr_val = Indicators.atr(candles, period=10) or (mid * 0.01)
+        return mid + (mult * atr_val), mid, mid - (mult * atr_val)
+
+    @staticmethod
+    def ttm_squeeze(candles: List[Dict[str, float]], period: int = 20) -> Dict[str, Any]:
+        """
+        Institutional TTM Squeeze Detector:
+        Detects volatility compression when Bollinger Bands fit inside Keltner Channels.
+        When squeeze releases, strong explosive directional impulse follows.
+        """
+        if not candles or len(candles) < period:
+            return {"squeeze_on": False, "momentum": 0.0, "signal": None}
+
+        closes = [c["close"] for c in candles]
+        bb_upper, bb_mid, bb_lower = Indicators.bollinger_bands(closes, period=period, num_std=2.0)
+        kc_upper, kc_mid, kc_lower = Indicators.keltner_channels(candles, period=period, mult=1.5)
+
+        # Squeeze is ON when Bollinger Bands are completely inside Keltner Channels
+        squeeze_on = (bb_lower > kc_lower) and (bb_upper < kc_upper)
+
+        # Linear regression momentum oscillator
+        arr = np.asarray(closes[-period:], dtype=np.float64)
+        x = np.arange(len(arr))
+        slope, intercept = np.polyfit(x, arr, 1)
+        momentum = float(slope)
+
+        signal = None
+        if not squeeze_on:  # Squeeze released / active momentum expansion
+            if momentum > 0:
+                signal = "LONG"
+            elif momentum < 0:
+                signal = "SHORT"
+
+        return {
+            "squeeze_on": squeeze_on,
+            "momentum": momentum,
+            "signal": signal,
+            "bb_bandwidth": (bb_upper - bb_lower) / max(0.001, bb_mid)
+        }
+
+    @staticmethod
+    def liquidity_sweep(candles: List[Dict[str, float]], lookback: int = 20) -> Optional[Dict[str, Any]]:
+        """
+        Smart Money Concept: Liquidity Sweep & Stop Hunt Detector.
+        Identifies wick sweeps beyond previous swing high/low that immediately close back inside.
+        """
+        if not candles or len(candles) < lookback + 2:
+            return None
+
+        historical = candles[-(lookback + 2):-1]
+        cur = candles[-1]
+
+        swing_high = max(c["high"] for c in historical)
+        swing_low = min(c["low"] for c in historical)
+
+        # Bullish Liquidity Sweep (Swept low for retail stop orders, but closed strong above swing low)
+        if cur["low"] < swing_low and cur["close"] > swing_low:
+            body = abs(cur["close"] - cur["open"])
+            lower_wick = min(cur["open"], cur["close"]) - cur["low"]
+            if lower_wick > body * 1.5:  # Strong rejection hammer wick
+                return {
+                    "type": "BULLISH_SWEEP",
+                    "direction": "LONG",
+                    "sweep_level": swing_low,
+                    "conviction": 90
+                }
+
+        # Bearish Liquidity Sweep (Swept high, closed below swing high with long upper wick)
+        if cur["high"] > swing_high and cur["close"] < swing_high:
+            body = abs(cur["close"] - cur["open"])
+            upper_wick = cur["high"] - max(cur["open"], cur["close"])
+            if upper_wick > body * 1.5:  # Shooting star rejection wick
+                return {
+                    "type": "BEARISH_SWEEP",
+                    "direction": "SHORT",
+                    "sweep_level": swing_high,
+                    "conviction": 90
+                }
+
         return None

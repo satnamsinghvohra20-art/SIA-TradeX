@@ -195,8 +195,8 @@ class GeminiService:
             return fallback
 
         catalysts_str = "; ".join(catalysts[:2]) if catalysts else "None"
-        prompt = f"""You are an elite quantitative crypto hedge fund AI.
-Analyze the setup for {symbol} (Hint: {direction_hint}).
+        prompt = f"""You are an elite quantitative crypto hedge fund AI and risk management specialist.
+Analyze the setup for {symbol} (Directional Hint: {direction_hint}).
 
 MARKET CONTEXT:
 Price: ${ctx.price:,.4f}
@@ -206,11 +206,17 @@ RSI 1h: {ctx.rsi_1h or 'N/A'} | RSI 5m: {ctx.rsi_5m or 'N/A'}
 VWAP: {'ABOVE' if ctx.price > (ctx.vwap or 0) else 'BELOW'} (VWAP: {ctx.vwap or 'N/A'})
 Funding Rate: {f'{ctx.funding_rate:.5f}' if ctx.funding_rate is not None else 'N/A'}
 Order Book Imbalance: {f'{ctx.order_book_imbalance:+.2f}' if ctx.order_book_imbalance is not None else 'N/A'}
+TTM Volatility Squeeze: {'COMPRESSED (WAIT FOR BREAKOUT)' if ctx.squeeze_on else f'EXPANDING (Momentum {ctx.squeeze_momentum})'}
+Smart Money Liquidity Sweep: {ctx.liquidity_sweep or 'None'}
+ADX Trend Strength: {ctx.adx or 'N/A'} (>=25 strong trend, <20 choppy)
 Breakout State: {ctx.breakout or 'none'}
 Recent Catalysts: {catalysts_str}
 
-DECISION RULES:
-- Output JSON strictly matching this schema:
+INSTITUTIONAL QUANTITATIVE RULES:
+1. HIGH PROBABILITY ONLY: Only approve LONG or SHORT when multi-timeframe trend aligns and there is an asymmetric mathematical edge.
+2. CAPITAL PRESERVATION: If market is compressed inside Squeeze or ADX < 20 (choppy sideways range without liquidity sweep), vote IGNORE to prevent whipsaws.
+3. SMART MONEY CONFLUENCE: If a Bullish or Bearish Liquidity Sweep occurred, prioritize trading the absorption bounce with high confidence.
+4. Output JSON strictly matching this schema:
   {{
     "signal": "LONG" | "SHORT" | "IGNORE",
     "confidence": integer (0 to 100),
@@ -218,7 +224,7 @@ DECISION RULES:
     "reason": "concise explanation under 100 characters",
     "key_drivers": ["factor 1", "factor 2"]
   }}
-- Vote IGNORE if indicators heavily contradict or RSI is extreme (>80 for Long, <20 for Short).
+- Vote IGNORE if indicators contradict or RSI is extreme (>80 for Long, <20 for Short).
 - Output raw JSON only with NO markdown fences.
 """
         try:

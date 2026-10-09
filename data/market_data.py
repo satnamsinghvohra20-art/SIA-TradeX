@@ -150,6 +150,11 @@ class MarketData:
             avg_vol = sum(vols[-21:-1]) / 20.0
             vol_confirmed = vols[-1] >= (avg_vol * settings.VOLUME_SPIKE_MULT)
 
+        # Institutional Quantitative Additions: Squeeze, Liquidity Sweep, ADX
+        squeeze_info = Indicators.ttm_squeeze(candles_1h, 20)
+        sweep_info = Indicators.liquidity_sweep(candles_1h, 20)
+        adx_val, _, _ = Indicators.adx(candles_1h, 14)
+
         return MarketContext(
             symbol=symbol,
             price=price,
@@ -164,6 +169,10 @@ class MarketData:
             funding_rate=self.funding_rate(symbol),
             order_book_imbalance=self.order_book_imbalance(symbol),
             volume_confirmed=vol_confirmed,
+            squeeze_on=squeeze_info.get("squeeze_on", False),
+            squeeze_momentum=round(squeeze_info.get("momentum", 0.0), 4) if squeeze_info.get("momentum") else None,
+            liquidity_sweep=sweep_info.get("type") if sweep_info else None,
+            adx=round(adx_val, 1) if adx_val else None,
         )
 
 

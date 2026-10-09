@@ -149,3 +149,7 @@ class MarketContext(BaseModel):
     funding_rate: Optional[float] = None
     order_book_imbalance: Optional[float] = None
     volume_confirmed: bool = False
+    squeeze_on: bool = False
+    squeeze_momentum: Optional[float] = None
+    liquidity_sweep: Optional[str] = None
+    adx: Optional[float] = None
