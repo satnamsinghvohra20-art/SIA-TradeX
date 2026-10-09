@@ -64,7 +64,7 @@ def fetch_24h_ticker(symbol: str):
         return {}
 
 
-def analyze_market_and_send_alarm():
+def analyze_market_and_send_alarm(send_alert: bool = True):
     universe = [
         "PAXGUSDT",  # Gold Crypto Safe Haven
         "BTCUSDT",   # Bitcoin Macro Leader
@@ -255,15 +255,99 @@ def analyze_market_and_send_alarm():
         f"\n💎 *Sia Ki Secret Strategy for Profit:* Satnam ji, jaise hi price Target 1 (${best['tp1']:,.2f}) par पहुंचेगी, half profit lock karke Stop-Loss entry par shift kar denge—isse trade *100% Risk-Free* ho jayegi! Aapka capital 100% protect rakhna meri first priority hai. Main yahan continuous monitoring kar rahi hoon! 💖✨"
     )
 
-    print("Dispatching upgraded Super-Intelligent alert to Owner via Meta WhatsApp API...")
-    success = whatsapp_service.send_owner_alert(whatsapp_msg, sync=True)
-    if success:
-        print(f"SUCCESS: Super-Intelligent Alert successfully delivered to Satnam ji (+91 84210 77613)!")
+    if send_alert:
+        print("Dispatching upgraded Super-Intelligent alert to Owner via Meta WhatsApp API...")
+        success = whatsapp_service.send_owner_alert(whatsapp_msg, sync=True)
+        if success:
+            print(f"SUCCESS: Super-Intelligent Alert successfully delivered to Satnam ji (+91 84210 77613)!")
+        else:
+            print("FAILED to dispatch WhatsApp alert.")
     else:
-        print("FAILED to dispatch WhatsApp alert.")
+        print("[Scan Complete] Alert dispatch skipped (dry-run or below threshold).")
 
     return best
 
 
+def run_continuous_alarm_loop(interval_sec: int = 120, min_conviction: int = 85, send_whatsapp: bool = True):
+    """
+    Runs continuous live market monitoring in an institutional loop:
+    - Fetches 100% real live market data from Binance Futures every interval
+    - Calculates all indicators in real-time
+    - Dispatches WhatsApp alerts to Owner when high-conviction alpha appears
+    - Implements smart cooldown so Owner is not spammed with duplicate signals
+    """
+    import time
+    import argparse
+
+    print("=================================================================")
+    print("SIA-TradeX: STARTING CONTINUOUS LIVE ALPHA MONITORING LOOP")
+    print(f"Interval: {interval_sec}s | Min Conviction: {min_conviction}% | WhatsApp: {send_whatsapp}")
+    print("Target: Satnam Singh Vohra (+91 84210 77613) — OWNER ONLY")
+    print("Zero Fake Data: 100% Connected to Binance Futures Mainnet")
+    print("=================================================================\n")
+
+    last_alerted_key = None
+    last_alert_time = 0
+    cycle = 0
+
+    try:
+        while True:
+            cycle += 1
+            now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            print(f"\n[LOOP CYCLE #{cycle} | {now_utc}] Scanning Binance Futures universe...")
+
+            try:
+                # Run the quantitative scan with dry_run first to inspect best opportunity
+                best_opp = analyze_market_and_send_alarm(send_alert=False)
+                
+                if best_opp:
+                    conviction = best_opp.get("confidence", 0)
+                    sym = best_opp.get("symbol", "")
+                    bias = best_opp.get("bias", "")
+                    price = best_opp.get("price", 0.0)
+                    current_key = f"{sym}_{bias}"
+                    time_since_last = time.time() - last_alert_time
+
+                    # Check trigger criteria
+                    is_high_conviction = conviction >= min_conviction
+                    is_new_setup = current_key != last_alerted_key
+                    cooldown_expired = time_since_last >= 1800  # 30 min re-alert cooldown
+
+                    if is_high_conviction and (is_new_setup or cooldown_expired):
+                        print(f"⚡ HIGH CONVICTION SETUP TRIGGERED: {sym} ({bias}) at {conviction}% conviction!")
+                        if send_whatsapp:
+                            print(f"Sending real live alert to Owner (+91 84210 77613)...")
+                            analyze_market_and_send_alarm(send_alert=True)
+                            last_alerted_key = current_key
+                            last_alert_time = time.time()
+                    else:
+                        print(f"ℹ️ Status: Top setup is {sym} ({bias}) with {conviction}% conviction. Standing by (Next check in {interval_sec}s)...")
+            except Exception as e:
+                print(f"⚠️ Loop scan error: {e}")
+
+            time.sleep(interval_sec)
+    except KeyboardInterrupt:
+        print("\n[LOOP STOPPED] Cleanly halted continuous alpha monitoring.")
+
+
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description="SIA-TradeX Live Quantitative Market Scanner & Alarm")
+    parser.add_argument("--loop", action="store_true", help="Run continuously in a live loop")
+    parser.add_argument("--interval", type=int, default=120, help="Loop interval in seconds (default: 120)")
+    parser.add_argument("--min-conviction", type=int, default=85, help="Minimum conviction to trigger alert (default: 85)")
+    parser.add_argument("--dry-run", action="store_true", help="Scan live market without sending WhatsApp alert")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    analyze_market_and_send_alarm()
+    args = parse_args()
+    if args.loop:
+        run_continuous_alarm_loop(
+            interval_sec=args.interval,
+            min_conviction=args.min_conviction,
+            send_whatsapp=not args.dry_run
+        )
+    else:
+        analyze_market_and_send_alarm(send_alert=not args.dry_run)
+
