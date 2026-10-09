@@ -75,6 +75,14 @@ async def get_index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/api/status")
+async def get_status_api():
+    """Returns the current engine dashboard snapshot."""
+    if engine_ref:
+        return engine_ref.get_dashboard_snapshot()
+    return {"status": "starting", "message": "Engine initializing"}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)

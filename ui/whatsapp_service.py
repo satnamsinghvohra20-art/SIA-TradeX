@@ -103,21 +103,44 @@ class WhatsAppService:
 
     def notify_trade_open(self, pos: Any, score: float, regime: str, reason: str):
         """Alert owner of an opened trade."""
-        direction_emoji = "🟢 LONG" if pos.side == "LONG" else "🔴 SHORT"
-        sl_pct = abs(pos.sl_price - pos.entry_price) / pos.entry_price * 100
-        tp1_pct = abs(pos.tp1_price - pos.entry_price) / pos.entry_price * 100
+        def _get_num(obj, *keys, default=0.0):
+            for k in keys:
+                v = getattr(obj, k, None)
+                if isinstance(v, (int, float)):
+                    return float(v)
+            return default
+
+        def _get_str(obj, *keys, default=""):
+            for k in keys:
+                v = getattr(obj, k, None)
+                if isinstance(v, str):
+                    return v
+            return default
+
+        direction = _get_str(pos, "direction", "side", default="LONG")
+        entry = _get_num(pos, "entry", "entry_price", default=0.0)
+        sl = _get_num(pos, "sl", "sl_price", default=0.0)
+        tp1 = _get_num(pos, "tp", "tp1_price", default=0.0)
+        tp2 = _get_num(pos, "tp2", "tp2_price", default=0.0)
+        qty = _get_num(pos, "qty", "size", default=0.0)
+        leverage = int(_get_num(pos, "leverage", default=3))
+        symbol = _get_str(pos, "symbol", default="")
+
+        direction_emoji = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
+        sl_pct = (abs(sl - entry) / entry * 100) if entry > 0 else 0.0
+        tp1_pct = (abs(tp1 - entry) / entry * 100) if entry > 0 else 0.0
 
         text = (
             f"💖 *SIA-TradeX: New Trade Opened!* 🚀\n\n"
             f"Satnam ji, maine aapke liye ek naya trade open kiya hai:\n\n"
-            f"• *Symbol:* {pos.symbol}\n"
+            f"• *Symbol:* {symbol}\n"
             f"• *Side:* {direction_emoji}\n"
-            f"• *Entry Price:* ${pos.entry_price:,.4f}\n"
-            f"• *Quantity:* {pos.size}\n"
-            f"• *Leverage:* {pos.leverage}x\n"
-            f"• *Stop-Loss (SL):* ${pos.sl_price:,.4f} (-{sl_pct:.2f}%)\n"
-            f"• *Take-Profit 1:* ${pos.tp1_price:,.4f} (+{tp1_pct:.2f}%)\n"
-            f"• *Take-Profit 2:* ${pos.tp2_price:,.4f}\n"
+            f"• *Entry Price:* ${entry:,.4f}\n"
+            f"• *Quantity:* {qty:,.4f}\n"
+            f"• *Leverage:* {leverage}x\n"
+            f"• *Stop-Loss (SL):* ${sl:,.4f} (-{sl_pct:.2f}%)\n"
+            f"• *Take-Profit 1:* ${tp1:,.4f} (+{tp1_pct:.2f}%)\n"
+            f"• *Take-Profit 2:* ${tp2:,.4f}\n"
             f"• *Regime:* {regime}\n"
             f"• *Conviction Score:* {score:.1f}/100\n"
             f"• *Reason:* {reason}\n\n"

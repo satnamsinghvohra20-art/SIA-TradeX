@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 # Load .env from current directory or subfolder
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
+if (BASE_DIR.parent / ".env").exists():
+    load_dotenv(BASE_DIR.parent / ".env", override=False)
 if not os.getenv("BINANCE_API_KEY") and (BASE_DIR / "bot_v13_fixed" / ".env").exists():
     load_dotenv(BASE_DIR / "bot_v13_fixed" / ".env")
 
@@ -122,9 +124,9 @@ class Settings(BaseSettings):
     MIN_SIGNAL_SCORE: int = 4            # High sensitivity for multi-opportunity flow
     MAX_SIGNAL_SCORE: int = 8
 
-    # Expanded Symbol Universe (Top 28 High-Volume Binance Futures)
+    # Expanded Symbol Universe (Top High-Volume Binance Futures + Gold Safe Haven)
     ACTIVE_SYMBOLS: List[str] = [
-        "BTCUSDT", "ETHUSDT", "SOLUSDT", "LINKUSDT", "DOGEUSDT", "AVAXUSDT", "ADAUSDT",
+        "PAXGUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "LINKUSDT", "DOGEUSDT", "AVAXUSDT", "ADAUSDT",
         "XRPUSDT", "BNBUSDT", "SUIUSDT", "NEARUSDT", "APTUSDT", "OPUSDT", "ARBUSDT",
         "PEPEUSDT", "SHIBUSDT", "WIFUSDT", "FETUSDT", "RENDERUSDT", "INJUSDT",
         "TIAUSDT", "SEIUSDT", "AAVEUSDT", "UNIUSDT", "LDOUSDT", "DOTUSDT", "FILUSDT", "TRXUSDT"

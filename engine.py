@@ -24,6 +24,7 @@ from data.news_client import NewsFeed
 from ai.gemini_service import gemini_service
 from ai.hybrid_pipeline import hybrid_ai
 from strategies.confluence import confluence_strategy
+from strategies.indicators import Indicators
 from strategies.regime import MarketRegimeDetector
 from strategies.microstructure import microstructure_alpha
 from execution.paper_account import PaperAccount
@@ -729,6 +730,103 @@ class QuantEngine:
                 pass
             time.sleep(5.0)
 
+    def _autonomous_alpha_alarm_scanner(self):
+        """
+        Continuous 24/7 background alpha trader and scanner:
+        Evaluates prime assets using institutional confluence (TTM Squeeze, Sweeps, ADX, EMAs).
+        When a high-conviction setup (>= 85%) is identified:
+        - Automatically enters a paper trade if symbol not already in trade
+        - Sets asymmetric TP1 (50% scale-out + BE), TP2, SL
+        - Automatically notifies Satnam ji on WhatsApp
+        """
+        universe = ["PAXGUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "AVAXUSDT", "SUIUSDT"]
+        while self.running:
+            if not self.ai_trading_active:
+                time.sleep(2.0)
+                continue
+            try:
+                for sym in universe:
+                    with self._positions_lock:
+                        if any(p.symbol == sym for p in self.positions.values()):
+                            continue
+                        if len(self.positions) >= settings.MAX_OPEN_TRADES:
+                            break
+
+                    ctx = market_data.get_market_context(sym)
+                    if not ctx or not ctx.price:
+                        continue
+
+                    price = ctx.price
+                    candles_1h = market_data.klines(sym, interval="1h", limit=50)
+                    if not candles_1h or len(candles_1h) < 25:
+                        continue
+
+                    closes = [c["close"] for c in candles_1h]
+                    ema20 = Indicators.ema(closes, 20)
+                    ema50 = Indicators.ema(closes, 50)
+                    rsi14 = ctx.rsi_1h or Indicators.rsi(closes, 14) or 50.0
+                    atr14 = ctx.atr or Indicators.atr(candles_1h, 14) or (price * 0.015)
+                    squeeze_info = Indicators.ttm_squeeze(candles_1h, 20)
+                    sweep_info = Indicators.liquidity_sweep(candles_1h, 20)
+                    adx_score = ctx.adx or 20.0
+
+                    trend = "BULLISH" if price > ema20 and ema20 > ema50 else ("BEARISH" if price < ema20 and ema20 < ema50 else "CHOP")
+                    bias = "NEUTRAL"
+                    confidence = 50
+
+                    if sweep_info:
+                        if sweep_info.get("direction") == "LONG":
+                            bias = "LONG"
+                            confidence += 28
+                        elif sweep_info.get("direction") == "SHORT":
+                            bias = "SHORT"
+                            confidence += 28
+
+                    if trend == "BULLISH" and bias != "SHORT":
+                        bias = "LONG"
+                        confidence += 20
+                    elif trend == "BEARISH" and bias != "LONG":
+                        bias = "SHORT"
+                        confidence += 20
+
+                    if not squeeze_info["squeeze_on"]:
+                        mom = squeeze_info.get("momentum", 0.0)
+                        if bias == "LONG" and mom > 0:
+                            confidence += 15
+                        elif bias == "SHORT" and mom < 0:
+                            confidence += 15
+
+                    if adx_score >= 25.0:
+                        confidence += 10
+
+                    confidence = max(40, min(96, confidence))
+
+                    if bias in ("LONG", "SHORT") and confidence >= 85:
+                        reason = f"Institutional Alpha: {trend} | ADX {adx_score:.1f} | {'Squeeze ON' if squeeze_info['squeeze_on'] else 'Squeeze Fired'}"
+                        ai_dec = AISignalDecision(
+                            signal=bias,
+                            confidence=confidence,
+                            regime=ctx.regime.value if ctx.regime else "TRENDING",
+                            reason=reason,
+                            key_drivers=["Institutional Confluence", "TTM Squeeze", "ADX Trend"]
+                        )
+                        size = min(settings.MAX_TRADE_USDT, max(settings.MIN_TRADE_USDT, self.get_equity() * (settings.RISK_PER_TRADE_PCT / 100.0) * 2.0))
+                        self._open_position(
+                            symbol=sym,
+                            direction=bias,
+                            score=confidence // 10,
+                            usdt_size=round(size, 2),
+                            reasons=[reason],
+                            sources=["alpha_alarm_scanner"],
+                            ai_decision=ai_dec,
+                            ctx=ctx
+                        )
+                        logger.info(f"[AlphaScanner] Autonomously entered {sym} {bias} ({confidence}% conviction) paper trade at ${price:,.2f}")
+            except Exception as e:
+                logger.warning(f"[AlphaScanner] Error: {e}")
+
+            time.sleep(30.0)
+
     def run(self):
         self.running = True
 
@@ -737,6 +835,7 @@ class QuantEngine:
             ("websocket_stream", self.stream.start),
             ("quant_scalper", self._autonomous_quant_scalper),
             ("gemini_scanner", self._autonomous_gemini_scanner),
+            ("alpha_alarm_scanner", self._autonomous_alpha_alarm_scanner),
             ("polymarket", self.polymarket.run_loop),
             ("news", self.news.run_loop),
             ("telegram", telegram_service.run_loop),

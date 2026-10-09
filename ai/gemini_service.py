@@ -35,27 +35,45 @@ class GeminiKeyRotator:
         self.cooldowns: Dict[str, float] = {}
 
     def _discover_keys(self) -> List[str]:
+        # Hot reload .env to detect newly added keys in real-time
+        try:
+            base_dir = Path(__file__).resolve().parent.parent
+            load_dotenv(base_dir / ".env", override=True)
+            if (base_dir.parent / ".env").exists():
+                load_dotenv(base_dir.parent / ".env", override=False)
+        except Exception:
+            pass
+
         found: List[str] = []
-        raw_single = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
-        if raw_single and raw_single != "YOUR_GEMINI_KEY_HERE" and raw_single != "your_gemini_key_here":
+        raw_single = os.getenv("GEMINI_API_KEY", "") or settings.GEMINI_API_KEY
+        if raw_single and raw_single not in ("YOUR_GEMINI_KEY_HERE", "your_gemini_key_here"):
             for k in raw_single.replace(";", ",").replace("\n", ",").split(","):
                 k = k.strip()
                 if k and k not in found and len(k) > 10:
                     found.append(k)
 
-        raw_multi = getattr(settings, "GEMINI_API_KEYS", "") or os.getenv("GEMINI_API_KEYS", "")
+        raw_multi = os.getenv("GEMINI_API_KEYS", "") or getattr(settings, "GEMINI_API_KEYS", "")
         if raw_multi:
             for k in raw_multi.replace(";", ",").replace("\n", ",").split(","):
                 k = k.strip()
                 if k and k not in found and len(k) > 10:
                     found.append(k)
 
-        for i in range(1, 26):
+        for i in range(1, 51):
             k = os.getenv(f"GEMINI_API_KEY_{i}", "").strip()
             if k and k not in found and len(k) > 10:
                 found.append(k)
 
         return found
+
+    def mark_failed(self, key: str, is_permanent: bool = False):
+        with self._lock:
+            if is_permanent:
+                if key in self.keys and len(self.keys) > 1:
+                    self.keys.remove(key)
+                    logger.warning(f"[GeminiRotator] Removed suspended/invalid key from pool. Remaining keys: {len(self.keys)}")
+            else:
+                self.cooldowns[key] = time.time() + 180.0  # 3 min rate-limit cooldown
 
     def get_current_key(self) -> Optional[str]:
         with self._lock:
@@ -65,6 +83,10 @@ class GeminiKeyRotator:
 
     def rotate(self, reason: str = "Quota limit hit") -> Optional[str]:
         with self._lock:
+            # Dynamically reload keys from environment/.env to capture any newly added keys
+            fresh_keys = self._discover_keys()
+            if fresh_keys:
+                self.keys = fresh_keys
             if not self.keys:
                 return None
             old_idx = self.current_idx
@@ -241,7 +263,11 @@ INSTITUTIONAL QUANTITATIVE RULES:
         except Exception as e:
             err_str = str(e)
             logger.warning(f"[Gemini] API error during signal eval for {symbol}: {err_str}")
-            if any(k in err_str.lower() for k in ["429", "resourceexhausted", "quota", "invalid", "permission"]):
+            if any(k in err_str.lower() for k in ["429", "resourceexhausted", "quota", "invalid", "permission", "suspended", "403"]):
+                curr_key = self.rotator.get_current_key()
+                is_perm = any(k in err_str.lower() for k in ["suspended", "403", "invalid", "permission"])
+                if curr_key:
+                    self.rotator.mark_failed(curr_key, is_permanent=is_perm)
                 self.rotator.rotate(err_str)
                 self._configure_active_key()
             return fallback
@@ -297,7 +323,11 @@ JSON only:
         except Exception as e:
             err_str = str(e)
             logger.warning(f"[Gemini] API error during smart exit eval for {symbol}: {err_str}")
-            if any(k in err_str.lower() for k in ["429", "resourceexhausted", "quota"]):
+            if any(k in err_str.lower() for k in ["429", "resourceexhausted", "quota", "suspended", "403"]):
+                curr_key = self.rotator.get_current_key()
+                is_perm = any(k in err_str.lower() for k in ["suspended", "403", "invalid"])
+                if curr_key:
+                    self.rotator.mark_failed(curr_key, is_permanent=is_perm)
                 self.rotator.rotate(err_str)
                 self._configure_active_key()
             return fallback
