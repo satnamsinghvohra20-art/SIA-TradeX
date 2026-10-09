@@ -188,6 +188,40 @@ class WhatsAppService:
         )
         self.send_owner_alert(text)
 
+    def notify_tp1_hit(
+        self,
+        symbol: str,
+        side: str,
+        entry: float,
+        exit_price: float,
+        locked_pnl: float,
+        released_margin: float,
+        remaining_margin: float,
+        remaining_balance: float,
+        equity: float,
+        daily_pnl: float
+    ):
+        """Alert owner that Target 1 was hit, 50% profit locked, and trade is now 100% risk-free."""
+        daily_sign = "+" if daily_pnl >= 0 else ""
+        text = (
+            f"🎯 *SIA-TradeX: TARGET 1 HIT & 50% PROFIT LOCKED!* 💖🎉\n\n"
+            f"Satnam ji, bahut badhiya! Hamara Target 1 hit ho chuka hai:\n\n"
+            f"• *Symbol:* {symbol} ({side})\n"
+            f"• *Entry Price:* ${entry:,.4f}\n"
+            f"• *Exit Price (TP1):* ${exit_price:,.4f}\n"
+            f"• *50% Realized Profit Locked:* *+${locked_pnl:,.2f} USDT* 💰\n"
+            f"• *Released Margin Back to Wallet:* ${released_margin:,.2f} USDT\n"
+            f"• *Stop-Loss Status:* Shifted to Entry (${entry:,.4f}) 🛡️\n"
+            f"• *Trade Status:* *100% RISK-FREE RUNNER!* 🚀\n\n"
+            f"💵 *UPDATED WALLET LEDGER:*\n"
+            f"• *Remaining Available Cash:* *${remaining_balance:,.2f} USDT*\n"
+            f"• *Active Capital in Runner:* ${remaining_margin:,.2f} USDT\n"
+            f"• *Total Account Equity:* *${equity:,.2f} USDT*\n"
+            f"• *Today's Cumulative Net Profit:* *{daily_sign}${daily_pnl:,.2f} USDT*\n\n"
+            f"✨ Ab is trade me koi loss nahi ho sakta! Remaining 50% position Target 2 ke liye risk-free run ho rahi hai! 💖"
+        )
+        self.send_owner_alert(text)
+
     def notify_trade_close(
         self,
         symbol: str,
@@ -197,6 +231,8 @@ class WhatsAppService:
         daily_pnl: Optional[float] = None,
         equity: Optional[float] = None,
         remaining_balance: Optional[float] = None,
+        released_margin: Optional[float] = None,
+        invested_margin: Optional[float] = None,
         wins: Optional[int] = None,
         losses: Optional[int] = None
     ):
@@ -205,9 +241,13 @@ class WhatsAppService:
         sign = "+" if pnl >= 0 else ""
 
         financial_overview = ""
-        if equity is not None or remaining_balance is not None or daily_pnl is not None:
+        if equity is not None or remaining_balance is not None or daily_pnl is not None or released_margin is not None:
             daily_sign = "+" if (daily_pnl or 0) >= 0 else ""
             financial_overview = f"\n💰 *UPDATED FINANCIAL LEDGER:*\n"
+            if released_margin is not None:
+                financial_overview += f"• *Released Margin Back to Cash:* ${released_margin:,.2f} USDT\n"
+            if invested_margin is not None:
+                financial_overview += f"• *Active Invested in Other Trades:* ${invested_margin:,.2f} USDT\n"
             if remaining_balance is not None:
                 financial_overview += f"• *Updated Remaining Balance:* ${remaining_balance:,.2f} USDT\n"
             if equity is not None:
@@ -284,23 +324,67 @@ class WhatsAppService:
         sl: float,
         tp: float,
         confidence: int,
-        rationale: str
+        rationale: str,
+        tp2: Optional[float] = None,
+        tp3: Optional[float] = None,
+        recommended_investment: Optional[float] = None,
+        leverage: Optional[int] = None,
+        projected_profit_tp1: Optional[float] = None,
+        projected_profit_tp2: Optional[float] = None,
+        projected_loss_sl: Optional[float] = None,
+        remaining_balance: Optional[float] = None,
+        total_invested: Optional[float] = None,
+        equity: Optional[float] = None,
+        daily_pnl: Optional[float] = None
     ):
-        """Send actionable high-precision trade alarm."""
+        """Send actionable high-precision trade alarm with full capital ledger."""
         side_icon = "🟢 LONG / BUY" if side.upper() == "LONG" else "🔴 SHORT / SELL"
         rr = abs(tp - price) / max(0.0001, abs(price - sl))
+
+        ledger_block = ""
+        if (
+            recommended_investment is not None
+            or remaining_balance is not None
+            or equity is not None
+            or daily_pnl is not None
+        ):
+            daily_sign = "+" if (daily_pnl or 0.0) >= 0 else ""
+            lev_str = f" ({leverage}x Leverage)" if leverage else ""
+            ledger_block = f"\n💵 *CAPITAL, PROFIT TARGETS & BALANCE LEDGER:*\n"
+            if recommended_investment is not None:
+                ledger_block += f"• *Recommended Trade Investment:* *${recommended_investment:,.2f} USDT*{lev_str}\n"
+            if projected_profit_tp1 is not None:
+                ledger_block += f"• *Target 1 Expected Profit (50% Lock):* *+${projected_profit_tp1:,.2f} USDT*\n"
+            if projected_profit_tp2 is not None:
+                ledger_block += f"• *Target 2 Expected Profit (Core TP):* *+${projected_profit_tp2:,.2f} USDT*\n"
+            if projected_loss_sl is not None:
+                ledger_block += f"• *Strict Stop-Loss Risk:* *-${projected_loss_sl:,.2f} USDT*\n"
+            if remaining_balance is not None:
+                ledger_block += f"• *Remaining Available Cash:* *${remaining_balance:,.2f} USDT*\n"
+            if total_invested is not None:
+                ledger_block += f"• *Active Capital in Other Trades:* *${total_invested:,.2f} USDT*\n"
+            if equity is not None:
+                ledger_block += f"• *Total Account Equity:* *${equity:,.2f} USDT*\n"
+            if daily_pnl is not None:
+                ledger_block += f"• *Today's Cumulative Net Profit:* *{daily_sign}${daily_pnl:,.2f} USDT*\n"
+
+        tp2_str = f"• *Take-Profit 2 (Core Profit):* ${tp2:,.4f}\n" if tp2 else ""
+        tp3_str = f"• *Take-Profit 3 (Runner Surge):* ${tp3:,.4f}\n" if tp3 else ""
+
         text = (
-            f"🚨 *SIA-TradeX: HIGH CONVICTION TRADE ALARM* 🔔\n\n"
+            f"🚨 *SIA-TradeX: HIGH CONVICTION TRADE ALARM* 🔔💖\n\n"
             f"Satnam ji! Market me ek high-probability trade opportunity trigger hui hai:\n\n"
             f"• *Asset:* {symbol}\n"
             f"• *Action:* *{side_icon}*\n"
             f"• *Current Price:* ${price:,.4f}\n"
-            f"• *Recommended SL:* ${sl:,.4f}\n"
-            f"• *Recommended TP:* ${tp:,.4f}\n"
+            f"• *Strict Stop-Loss (SL):* ${sl:,.4f} (Safe Exit)\n"
+            f"• *Take-Profit 1 (Lock 50% & BE):* ${tp:,.4f}\n"
+            f"{tp2_str}{tp3_str}"
             f"• *Risk-Reward Ratio:* 1:{rr:.2f}\n"
-            f"• *AI Confidence:* {confidence}%\n\n"
-            f"📊 *Analysis Summary:*\n{rationale}\n\n"
-            f"💖 Sia recommendation: Capital safe rakh kar strictly stop-loss follow karein!"
+            f"• *Quant & AI Confidence:* {confidence}%\n\n"
+            f"📊 *Analysis Summary:*\n{rationale}\n"
+            f"{ledger_block}\n"
+            f"💖 Sia guidance: Capital safe rakh kar strictly stop-loss follow karein! Main live monitoring kar rahi hoon! ✨"
         )
         self.send_owner_alert(text)
 

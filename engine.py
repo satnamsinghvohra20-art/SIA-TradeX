@@ -472,12 +472,14 @@ class QuantEngine:
             whatsapp_service.send_owner_alert(
                 f"🛡️ *SIA-TradeX: Capital Protected!* 💖\n\n"
                 f"Satnam ji, position securely closed:\n"
-                f"• Asset: {symbol} ({pos.direction})\n"
-                f"• Realized PnL: {pnl:+,.2f} USDT\n"
-                f"• Remaining Available Balance: ${remaining_balance:,.2f} USDT\n"
-                f"• Total Account Equity: ${equity:,.2f} USDT\n"
-                f"• Today's Cumulative Profit: {'+' if daily_metrics['pnl']>=0 else ''}${daily_metrics['pnl']:.2f} USDT\n"
-                f"• Protection Reason: {', '.join(protect_reasons)}"
+                f"• *Asset:* {symbol} ({pos.direction})\n"
+                f"• *Realized Trade PnL:* {pnl:+,.2f} USDT\n"
+                f"• *Released Margin Back to Cash:* ${pos.usdt_size:,.2f} USDT\n"
+                f"• *Active Invested in Other Trades:* ${active_invested:,.2f} USDT\n"
+                f"• *Remaining Available Balance:* ${remaining_balance:,.2f} USDT\n"
+                f"• *Total Account Equity:* ${equity:,.2f} USDT\n"
+                f"• *Today's Cumulative Profit:* {'+' if daily_metrics['pnl']>=0 else ''}${daily_metrics['pnl']:.2f} USDT\n"
+                f"• *Protection Reason:* {', '.join(protect_reasons)}"
             )
         else:
             telegram_service.notify_trade_close(
@@ -491,6 +493,8 @@ class QuantEngine:
                 daily_pnl=daily_metrics["pnl"],
                 equity=equity,
                 remaining_balance=remaining_balance,
+                released_margin=pos.usdt_size,
+                invested_margin=active_invested,
                 wins=daily_metrics["wins"],
                 losses=daily_metrics["losses"]
             )
@@ -663,10 +667,28 @@ class QuantEngine:
                         sources=pos.sources, score=pos.score, ai_reason=pos.ai_reason,
                         equity=self.get_equity(), profit_protected=True, live=self.live_mode, leverage=pos.leverage
                     ))
+                    equity = self.get_equity()
+                    with self._positions_lock:
+                        active_invested = sum(p.usdt_size for p in self.positions.values())
+                    remaining_balance = self.paper_account.cash if not self.live_mode else (equity - active_invested)
+                    daily_metrics = db.get_daily_metrics()
+
                     telegram_service.send_message(
                         f"🎯 <b>[TP1 HIT] {sym} ({pos.direction})</b>\n"
                         f"Locked 50% Gain: <b>+${half_pnl:.2f}</b>\n"
                         f"SL moved to Breakeven (<code>${pos.entry:,.4f}</code>). Runner is now <b>100% RISK-FREE</b>!"
+                    )
+                    whatsapp_service.notify_tp1_hit(
+                        symbol=sym,
+                        side=pos.direction,
+                        entry=pos.entry,
+                        exit_price=price,
+                        locked_pnl=half_pnl,
+                        released_margin=half_usdt,
+                        remaining_margin=half_usdt,
+                        remaining_balance=remaining_balance,
+                        equity=equity,
+                        daily_pnl=daily_metrics["pnl"]
                     )
                     continue
 

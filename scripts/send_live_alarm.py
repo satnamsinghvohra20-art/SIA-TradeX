@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 from config.settings import settings
 from strategies.indicators import Indicators
 from ui.whatsapp_service import whatsapp_service
+from storage.database import db
 
 
 def fetch_binance_klines(symbol: str, interval: str = "1h", limit: int = 50):
@@ -225,6 +226,34 @@ def analyze_market_and_send_alarm(send_alert: bool = True):
 
     print(f"\nTop Alpha Setup Selected: {best['symbol']} ({best['bias']}) with {best['confidence']}% conviction!\n")
 
+    # Calculate recommended trade sizing & financial ledger metrics
+    rec_margin = 35.0  # safe standard position margin ($35 USDT)
+    leverage = settings.DEFAULT_LEVERAGE  # e.g., 5x
+    notional_size = rec_margin * leverage  # $175.00 USDT
+    
+    tp1_gain = (abs(best["tp1"] - best["price"]) / best["price"]) * notional_size * 0.5  # 50% locked at TP1
+    tp2_gain = (abs(best["tp2"] - best["price"]) / best["price"]) * notional_size        # Core target
+    sl_loss = (abs(best["price"] - best["sl"]) / best["price"]) * notional_size          # Max risk at SL
+
+    # Fetch wallet ledger state from database
+    metrics = db.get_daily_metrics()
+    eq_history = db.get_equity_history(limit=1)
+    if eq_history:
+        acc_equity = float(eq_history[-1]["equity"])
+        rem_balance = float(eq_history[-1]["balance"])
+        invested_now = max(0.0, acc_equity - rem_balance)
+    else:
+        acc_equity = float(settings.PAPER_STARTING_BALANCE)
+        rem_balance = float(settings.PAPER_STARTING_BALANCE)
+        invested_now = 0.0
+
+    print(f"\n--- Financial Ledger Projection ---")
+    print(f"Recommended Investment: ${rec_margin:.2f} USDT ({leverage}x Lev = ${notional_size:.2f})")
+    print(f"Target 1 Expected Gain: +${tp1_gain:.2f} USDT | Target 2 Expected Gain: +${tp2_gain:.2f} USDT")
+    print(f"Strict Stop-Loss Risk: -${sl_loss:.2f} USDT")
+    print(f"Wallet Remaining Balance: ${rem_balance:,.2f} USDT | Total Account Equity: ${acc_equity:,.2f} USDT")
+    print(f"Today's Net Realized PnL: {'+' if metrics['pnl']>=0 else ''}${metrics['pnl']:.2f} USDT\n")
+
     # Format Sia's authentic, feminine, highly accurate WhatsApp alert for Satnam ji
     side_icon = "🟢 LONG / BUY" if best["bias"] == "LONG" else ("🔴 SHORT / SELL" if best["bias"] == "SHORT" else "⏸️ ACCUMULATION RANGE")
     now_str = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
@@ -241,6 +270,15 @@ def analyze_market_and_send_alarm(send_alert: bool = True):
         f"• *Target 3 (Runner Surge):* *${best['tp3']:,.2f}*\n"
         f"• *Risk-Reward Asymmetry:* *1:{best['rr']:.2f}*\n"
         f"• *Quant & AI Conviction:* *{best['confidence']}%*\n\n"
+        f"💵 *INVESTMENT, PROFIT TARGETS & BALANCE LEDGER:*\n"
+        f"• *Recommended Margin to Invest:* *${rec_margin:,.2f} USDT* ({leverage}x Leverage = ${notional_size:,.2f} Position)\n"
+        f"• *Target 1 Expected Profit (50% Lock):* *+${tp1_gain:,.2f} USDT* (+{(tp1_gain/rec_margin)*100:.1f}%)\n"
+        f"• *Target 2 Expected Profit (Core TP):* *+${tp2_gain:,.2f} USDT* (+{(tp2_gain/rec_margin)*100:.1f}%)\n"
+        f"• *Strict Stop-Loss Risk:* *-${sl_loss:,.2f} USDT* (-{(sl_loss/rec_margin)*100:.1f}%)\n"
+        f"• *Your Remaining Available Cash:* *${rem_balance:,.2f} USDT*\n"
+        f"• *Active Capital in Other Trades:* *${invested_now:,.2f} USDT*\n"
+        f"• *Total Account Equity:* *${acc_equity:,.2f} USDT*\n"
+        f"• *Today's Net Realized Profit:* *{'+' if metrics['pnl']>=0 else ''}${metrics['pnl']:,.2f} USDT* ({metrics['wins']}W / {metrics['losses']}L)\n\n"
         f"🧠 *Super-Intelligence Analysis:*\n"
         f"• {best['rationale']}\n"
         f"• 1h Trend: *{best['trend']}* | ADX Strength: *{best['adx']:.1f}*\n"

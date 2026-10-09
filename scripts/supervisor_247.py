@@ -61,6 +61,22 @@ class AutonomousSupervisor:
         t.start()
         print(f"[*] Cyber-Quant Web Dashboard active at: http://localhost:{self.port}")
 
+    def start_periodic_portfolio_reporter(self, interval_seconds: int = 7200):
+        """Dispatches full portfolio, invested capital, remaining balance, and PnL breakdown to owner periodically."""
+        def _run():
+            time.sleep(60)  # Wait 1 minute after boot
+            while self.running:
+                try:
+                    if self.engine and self.engine.running:
+                        logger.info("Sending periodic portfolio ledger update to Owner WhatsApp...")
+                        self.engine.send_portfolio_summary_to_owner()
+                except Exception as e:
+                    logger.warning(f"Periodic portfolio reporter error: {e}")
+                time.sleep(interval_seconds)
+
+        t = threading.Thread(target=_run, daemon=True, name="periodic_portfolio_reporter")
+        t.start()
+
     def run_forever(self):
         print("=================================================================")
         print("SIA-TradeX: STARTING 24/7 AUTONOMOUS RESILIENT TRADING SUPERVISOR")
@@ -72,6 +88,7 @@ class AutonomousSupervisor:
         print("=================================================================\n")
 
         self.start_web_server()
+        self.start_periodic_portfolio_reporter(interval_seconds=7200)
 
         while self.running:
             try:
