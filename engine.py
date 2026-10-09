@@ -189,6 +189,43 @@ class QuantEngine:
             f"RSI 1h: <code>{btc_ctx.rsi_1h or 'N/A'}</code> | Funding: <code>{btc_ctx.funding_rate or 0.0:.5f}</code>"
         )
 
+    def send_portfolio_summary_to_owner(self) -> str:
+        """Dispatches full portfolio, invested capital, remaining balance, and PnL breakdown to owner."""
+        equity = self.get_equity()
+        open_pos_list = []
+        with self._positions_lock:
+            invested = sum(p.usdt_size for p in self.positions.values())
+            for p in self.positions.values():
+                cur = self._get_fast_price(p.symbol) or p.entry
+                mult = p.leverage * p.usdt_size
+                p_pnl = ((cur - p.entry) / p.entry * mult) if p.direction == "LONG" else ((p.entry - cur) / p.entry * mult)
+                open_pos_list.append({
+                    "symbol": p.symbol,
+                    "direction": p.direction,
+                    "usdt_size": p.usdt_size,
+                    "entry": p.entry,
+                    "current_price": cur,
+                    "pnl": round(p_pnl, 2)
+                })
+
+        cash = self.paper_account.cash if not self.live_mode else (equity - invested)
+        metrics = db.get_daily_metrics()
+        unrealized = sum(p["pnl"] for p in open_pos_list)
+        btc_ctx = market_data.get_market_context("BTCUSDT")
+
+        whatsapp_service.notify_portfolio_status(
+            equity=equity,
+            cash=cash,
+            invested=invested,
+            unrealized_pnl=unrealized,
+            daily_pnl=metrics["pnl"],
+            wins=metrics["wins"],
+            losses=metrics["losses"],
+            open_positions=open_pos_list,
+            regime=btc_ctx.regime.value if btc_ctx else "NORMAL"
+        )
+        return "Portfolio status sent to Owner WhatsApp."
+
     def force_close_symbol(self, target: str) -> str:
         target_clean = target.strip()
         closed_count = 0
@@ -364,10 +401,24 @@ class QuantEngine:
 
         with self._positions_lock:
             self.positions[new_pos.id] = new_pos
+            invested_margin = sum(p.usdt_size for p in self.positions.values())
+
+        equity = self.get_equity()
+        remaining_balance = self.paper_account.cash if not self.live_mode else (equity - invested_margin)
+        daily_metrics = db.get_daily_metrics()
 
         # Notify via Telegram & WhatsApp (Owner Only)
         telegram_service.notify_trade_open(new_pos, score, ctx.regime.value, ai_decision.reason)
-        whatsapp_service.notify_trade_open(new_pos, score, ctx.regime.value, ai_decision.reason)
+        whatsapp_service.notify_trade_open(
+            pos=new_pos,
+            score=score,
+            regime=ctx.regime.value,
+            reason=ai_decision.reason,
+            equity=equity,
+            invested_margin=invested_margin,
+            remaining_balance=remaining_balance,
+            daily_pnl=daily_metrics["pnl"]
+        )
 
     def _close_position(self, pos: Position, reason: str, protect_reasons: Optional[List[str]] = None):
         symbol = pos.symbol
@@ -410,6 +461,10 @@ class QuantEngine:
 
         # Notify
         daily_metrics = db.get_daily_metrics()
+        with self._positions_lock:
+            active_invested = sum(p.usdt_size for p in self.positions.values())
+        remaining_balance = self.paper_account.cash if not self.live_mode else (equity - active_invested)
+
         if protect_reasons:
             telegram_service.notify_profit_protect(
                 symbol, pos.direction, pnl, pos.peak_pnl, protect_reasons, equity
@@ -419,6 +474,9 @@ class QuantEngine:
                 f"Satnam ji, position securely closed:\n"
                 f"• Asset: {symbol} ({pos.direction})\n"
                 f"• Realized PnL: {pnl:+,.2f} USDT\n"
+                f"• Remaining Available Balance: ${remaining_balance:,.2f} USDT\n"
+                f"• Total Account Equity: ${equity:,.2f} USDT\n"
+                f"• Today's Cumulative Profit: {'+' if daily_metrics['pnl']>=0 else ''}${daily_metrics['pnl']:.2f} USDT\n"
                 f"• Protection Reason: {', '.join(protect_reasons)}"
             )
         else:
@@ -426,7 +484,15 @@ class QuantEngine:
                 symbol, pos.direction, pnl, reason, daily_metrics["pnl"], equity
             )
             whatsapp_service.notify_trade_close(
-                symbol, pos.direction, pnl, reason
+                symbol=symbol,
+                side=pos.direction,
+                pnl=pnl,
+                reason=reason,
+                daily_pnl=daily_metrics["pnl"],
+                equity=equity,
+                remaining_balance=remaining_balance,
+                wins=daily_metrics["wins"],
+                losses=daily_metrics["losses"]
             )
 
     def _process_signal_batch(self):

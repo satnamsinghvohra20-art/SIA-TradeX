@@ -9,8 +9,8 @@ import json
 import logging
 import threading
 import urllib.request
-import urllib.error
-from typing import Optional, Dict, Any
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any, List
 from config.settings import settings
 
 logger = logging.getLogger("WhatsAppService")
@@ -101,8 +101,18 @@ class WhatsAppService:
         t.start()
         return True
 
-    def notify_trade_open(self, pos: Any, score: float, regime: str, reason: str):
-        """Alert owner of an opened trade."""
+    def notify_trade_open(
+        self,
+        pos: Any,
+        score: float,
+        regime: str,
+        reason: str,
+        equity: Optional[float] = None,
+        invested_margin: Optional[float] = None,
+        remaining_balance: Optional[float] = None,
+        daily_pnl: Optional[float] = None
+    ):
+        """Alert owner of an opened trade with invested amount and remaining balance."""
         def _get_num(obj, *keys, default=0.0):
             for k in keys:
                 v = getattr(obj, k, None)
@@ -125,10 +135,26 @@ class WhatsAppService:
         qty = _get_num(pos, "qty", "size", default=0.0)
         leverage = int(_get_num(pos, "leverage", default=3))
         symbol = _get_str(pos, "symbol", default="")
+        usdt_size = _get_num(pos, "usdt_size", default=0.0) or (qty * entry / max(1, leverage))
 
         direction_emoji = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
         sl_pct = (abs(sl - entry) / entry * 100) if entry > 0 else 0.0
         tp1_pct = (abs(tp1 - entry) / entry * 100) if entry > 0 else 0.0
+
+        financial_overview = ""
+        if equity is not None or remaining_balance is not None or usdt_size > 0:
+            financial_overview = f"\n💰 *CAPITAL & BALANCE LEDGER:*\n"
+            if usdt_size > 0:
+                financial_overview += f"• *Invested in this Trade:* ${usdt_size:,.2f} USDT ({leverage}x Leverage)\n"
+            if invested_margin is not None:
+                financial_overview += f"• *Total Active Invested Capital:* ${invested_margin:,.2f} USDT\n"
+            if remaining_balance is not None:
+                financial_overview += f"• *Remaining Available Balance:* ${remaining_balance:,.2f} USDT\n"
+            if equity is not None:
+                financial_overview += f"• *Total Account Equity:* ${equity:,.2f} USDT\n"
+            if daily_pnl is not None:
+                sign = "+" if daily_pnl >= 0 else ""
+                financial_overview += f"• *Today's Net Realized Profit:* {sign}${daily_pnl:,.2f} USDT\n"
 
         text = (
             f"💖 *SIA-TradeX: New Trade Opened!* 🚀\n\n"
@@ -143,7 +169,8 @@ class WhatsAppService:
             f"• *Take-Profit 2:* ${tp2:,.4f}\n"
             f"• *Regime:* {regime}\n"
             f"• *Conviction Score:* {score:.1f}/100\n"
-            f"• *Reason:* {reason}\n\n"
+            f"• *Reason:* {reason}\n"
+            f"{financial_overview}\n"
             f"✨ Main continuous monitoring kar rahi hoon, chinta bilkul mat kijiye! 💖"
         )
         self.send_owner_alert(text)
@@ -161,18 +188,91 @@ class WhatsAppService:
         )
         self.send_owner_alert(text)
 
-    def notify_trade_close(self, symbol: str, side: str, pnl: float, reason: str):
-        """Alert owner of a closed position with realized PnL."""
+    def notify_trade_close(
+        self,
+        symbol: str,
+        side: str,
+        pnl: float,
+        reason: str,
+        daily_pnl: Optional[float] = None,
+        equity: Optional[float] = None,
+        remaining_balance: Optional[float] = None,
+        wins: Optional[int] = None,
+        losses: Optional[int] = None
+    ):
+        """Alert owner of a closed position with realized PnL, invested profit, and updated remaining balance."""
         icon = "🎉" if pnl >= 0 else "🛡️"
         sign = "+" if pnl >= 0 else ""
+
+        financial_overview = ""
+        if equity is not None or remaining_balance is not None or daily_pnl is not None:
+            daily_sign = "+" if (daily_pnl or 0) >= 0 else ""
+            financial_overview = f"\n💰 *UPDATED FINANCIAL LEDGER:*\n"
+            if remaining_balance is not None:
+                financial_overview += f"• *Updated Remaining Balance:* ${remaining_balance:,.2f} USDT\n"
+            if equity is not None:
+                financial_overview += f"• *Total Account Equity:* ${equity:,.2f} USDT\n"
+            if daily_pnl is not None:
+                stat_str = f" ({wins}W / {losses}L)" if wins is not None else ""
+                financial_overview += f"• *Today's Total Realized Net Profit:* {daily_sign}${daily_pnl:,.2f} USDT{stat_str}\n"
+
         text = (
             f"{icon} *SIA-TradeX: Position Closed!* 💖\n\n"
             f"Satnam ji, position close ho chuki hai:\n\n"
             f"• *Symbol:* {symbol}\n"
             f"• *Side:* {side}\n"
-            f"• *Realized PnL:* {sign}${pnl:,.2f} USDT\n"
-            f"• *Exit Reason:* {reason}\n\n"
+            f"• *Realized Trade PnL:* {sign}${pnl:,.2f} USDT\n"
+            f"• *Exit Reason:* {reason}\n"
+            f"{financial_overview}\n"
             f"Aapka capital safe hai aur next high-conviction opportunity scan ho rahi hai! ✨"
+        )
+        self.send_owner_alert(text)
+
+    def notify_portfolio_status(
+        self,
+        equity: float,
+        cash: float,
+        invested: float,
+        unrealized_pnl: float,
+        daily_pnl: float,
+        wins: int,
+        losses: int,
+        open_positions: List[Dict[str, Any]],
+        regime: str = "NORMAL"
+    ):
+        """Send complete portfolio ledger & profit breakdown to owner."""
+        pnl_sign = "+" if daily_pnl >= 0 else ""
+        upnl_sign = "+" if unrealized_pnl >= 0 else ""
+        now_str = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
+
+        text = (
+            f"📊 *SIA-TradeX: PORTFOLIO & PROFIT SUMMARY* 💰💖\n\n"
+            f"Satnam ji, aapke account ki complete real-time report ({now_str}):\n\n"
+            f"💵 *CAPITAL & BALANCE LEDGER:*\n"
+            f"• *Total Account Equity:* *${equity:,.2f} USDT*\n"
+            f"• *Total Currently Invested:* *${invested:,.2f} USDT* ({len(open_positions)} Active Trades)\n"
+            f"• *Remaining Available Cash:* *${cash:,.2f} USDT*\n"
+            f"• *Today's Net Realized Profit:* *{pnl_sign}${daily_pnl:,.2f} USDT* ({wins}W / {losses}L)\n"
+            f"• *Live Floating Unrealized PnL:* *{upnl_sign}${unrealized_pnl:,.2f} USDT*\n"
+            f"• *Market Regime:* {regime}\n"
+        )
+
+        if open_positions:
+            text += "\n📈 *ACTIVE TRADES BREAKDOWN:*\n"
+            for p in open_positions[:6]:
+                dir_tag = "🟢 LONG" if p.get("direction") == "LONG" else "🔴 SHORT"
+                p_pnl = p.get("pnl", 0.0)
+                p_sign = "+" if p_pnl >= 0 else ""
+                text += (
+                    f"• *{p.get('symbol')} ({dir_tag}):* Margin: ${p.get('usdt_size', 0):,.2f} | "
+                    f"Entry: ${p.get('entry', 0):,.4f} | Live: ${p.get('current_price', 0):,.4f} | "
+                    f"PnL: *{p_sign}${p_pnl:,.2f}*\n"
+                )
+        else:
+            text += "\n<i>Filhal koi active positions nahi hain, high-conviction scanner monitoring kar raha hai.</i>\n"
+
+        text += (
+            f"\n✨ *Sia Assurance:* Main 24/7 continuous monitoring kar rahi hoon. Jaise hi Target 1 hit hoga, Stop-Loss breakeven par lock ho jayega! 💖🛡️"
         )
         self.send_owner_alert(text)
 

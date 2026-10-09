@@ -59,6 +59,9 @@ class MockEngine:
     def force_close_symbol(self, target: str):
         return f"Closed 1 position for {target}."
 
+    def send_portfolio_summary_to_owner(self):
+        return "Portfolio status sent to Owner WhatsApp."
+
     def inject_manual_trade(self, symbol, direction, size, force):
         pass
 
@@ -150,3 +153,19 @@ def test_api_manual_trade(client):
     })
     assert res.status_code == 200
     assert res.json()["status"] == "ok"
+
+
+def test_api_status(client):
+    res = client.get("/api/status")
+    assert res.status_code == 200
+    data = res.json()
+    assert "equity" in data
+    assert data["equity"] == 1000.0
+
+
+def test_api_portfolio_notify(client):
+    res = client.post("/api/portfolio/notify")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert "Portfolio status" in data["message"]

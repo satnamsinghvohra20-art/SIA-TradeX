@@ -83,6 +83,16 @@ async def get_status_api():
     return {"status": "starting", "message": "Engine initializing"}
 
 
+@app.get("/api/portfolio/notify")
+@app.post("/api/portfolio/notify")
+async def notify_portfolio_api():
+    """Triggers an instant WhatsApp portfolio & balance summary to Owner."""
+    if engine_ref:
+        msg = engine_ref.send_portfolio_summary_to_owner()
+        return {"status": "ok", "message": msg}
+    return {"status": "error", "message": "Engine not attached"}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
