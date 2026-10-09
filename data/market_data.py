@@ -6,7 +6,7 @@ High-precision Binance Futures market data client with warm-up caching and error
 import time
 import requests
 import threading
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from config.settings import settings
 from core.models import MarketContext, MarketRegime
 from strategies.indicators import Indicators

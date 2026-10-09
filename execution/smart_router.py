@@ -4,10 +4,13 @@ Captures maker fee rebate (0.02% vs 0.05%) via Post-Only (GTX) placement, fallin
 """
 
 import time
+import logging
 from typing import Dict, Tuple, Optional, Any
 from config.settings import settings
 from data.binance_stream import binance_stream
 from data.market_data import market_data
+
+logger = logging.getLogger("SIA-TradeX.Router")
 
 
 class SmartOrderRouter:
@@ -27,7 +30,7 @@ class SmartOrderRouter:
     ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """
         Attempts a Post-Only (GTX) limit fill at top-of-book. If unfilled within timeout,
-        falls back to immediate market sweep.
+        falls back to immediate market sweep for remaining unfilled balance.
         """
         client = self.executor.client
         if not client or not self.executor.connected:
@@ -68,9 +71,11 @@ class SmartOrderRouter:
             # Wait up to 400ms for passive fill
             start = time.time()
             filled = False
+            executed_qty = 0.0
             while time.time() - start < self.post_only_timeout_sec:
                 check = client.futures_get_order(symbol=symbol, orderId=order_id)
                 status = check.get("status")
+                executed_qty = float(check.get("executedQty", 0.0))
                 if status == "FILLED":
                     filled = True
                     order = check
@@ -80,36 +85,39 @@ class SmartOrderRouter:
                 time.sleep(0.05)
 
             if not filled:
-                # Cancel post-only order and sweep with market order
+                # Cancel post-only order and sweep remaining unfilled quantity with market order
                 try:
-                    client.futures_cancel_order(symbol=symbol, orderId=order_id)
+                    canceled = client.futures_cancel_order(symbol=symbol, orderId=order_id)
+                    executed_qty = float(canceled.get("executedQty", executed_qty))
                 except Exception:
                     pass
 
-                # Sweep with market order
-                order = client.futures_create_order(
-                    symbol=symbol,
-                    side=side,
-                    type="MARKET",
-                    quantity=qty
-                )
+                rem_qty = self.executor.round_qty(symbol, qty - executed_qty)
+                if rem_qty > 0:
+                    order = client.futures_create_order(
+                        symbol=symbol,
+                        side=side,
+                        type="MARKET",
+                        quantity=rem_qty
+                    )
+                    logger.info(f"[Router] Swept remaining unfilled {rem_qty} on {symbol} via market")
 
             fill_price = float(order.get("avgPrice") or passive_price)
             tp_rounded = self.executor.round_price(symbol, tp2)
             sl_rounded = self.executor.round_price(symbol, sl)
 
             # Attached Bracket Protection (Take Profit & Stop Loss)
+            # On Binance Futures, STOP_MARKET and TAKE_PROFIT_MARKET with closePosition=True do NOT take timeInForce
             try:
                 client.futures_create_order(
                     symbol=symbol,
                     side=opp_side,
                     type="TAKE_PROFIT_MARKET",
                     stopPrice=tp_rounded,
-                    closePosition=True,
-                    timeInForce="GTE_GTC"
+                    closePosition=True
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[Router] Could not attach exchange TP on {symbol}: {e}")
 
             try:
                 client.futures_create_order(
@@ -117,11 +125,10 @@ class SmartOrderRouter:
                     side=opp_side,
                     type="STOP_MARKET",
                     stopPrice=sl_rounded,
-                    closePosition=True,
-                    timeInForce="GTE_GTC"
+                    closePosition=True
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[Router] Could not attach exchange SL on {symbol}: {e}")
 
             return order, {
                 "entry": fill_price,
@@ -131,6 +138,6 @@ class SmartOrderRouter:
                 "qty": qty
             }
 
-        except Exception:
-            # Fallback to direct market execution
+        except Exception as e:
+            logger.warning(f"[Router] Post-only failed on {symbol} ({e}), falling back to direct market")
             return self.executor.open_market_position(symbol, direction, usdt_size, tp, tp2, sl)

@@ -59,13 +59,13 @@ class HybridAIPipeline:
         approved = score >= 1
         return approved, score, " | ".join(reasons) if reasons else "Fast-gate approved"
 
-    def tier2_async_update(self, symbol: str, ctx: MarketContext):
+    def tier2_async_update(self, symbol: str, ctx: MarketContext, direction: str = "LONG"):
         """
-        Tier-2 Background Task: Queries Gemini 2.5 Flash asynchronously.
+        Tier-2 Background Task: Queries Gemini asynchronously with candidate direction.
         Never blocks the execution hot path.
         """
         def _task():
-            decision = self.gemini.evaluate_signal(symbol, "LONG", ctx)
+            decision = self.gemini.evaluate_signal(symbol, direction, ctx)
             with self._cache_lock:
                 self._macro_bias_cache[symbol] = {
                     "signal": decision.signal,

@@ -6,7 +6,7 @@ Typed settings with environment variable support, validation, and defaults.
 import os
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
-from pydantic import Field
+from pydantic import Field, ConfigDict
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
@@ -39,7 +39,8 @@ class Settings(BaseSettings):
 
     # AI Configuration (Gemini)
     GEMINI_API_KEY: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_API_KEYS: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEYS", ""))
+    GEMINI_MODEL: str = Field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-1.5-flash"))
     GEMINI_MAX_RPM: int = 14  # Max 14 requests/min to strictly respect 15 RPM free tier
     GEMINI_AUTO_TRADE: bool = True
     GEMINI_AUTO_SCAN_SEC: int = 25
@@ -135,8 +136,7 @@ class Settings(BaseSettings):
     # Database
     DB_PATH: str = str(BASE_DIR / "sia_tradex.db")
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 settings = Settings()

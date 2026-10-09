@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  sia-tradex:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sia-tradex
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./sia_tradex.db:/app/sia_tradex.db
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/state', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

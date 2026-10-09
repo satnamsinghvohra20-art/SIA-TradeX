@@ -53,6 +53,7 @@ def main():
     parser = argparse.ArgumentParser(description="SIA-TradeX Pro Quant Trading System")
     parser.add_argument("--paper", action="store_true", default=True, help="Enable Paper Simulator execution (Default)")
     parser.add_argument("--live", action="store_true", help="Enable Live Binance Futures execution (Real Money)")
+    parser.add_argument("--confirm-live", action="store_true", help="Non-interactive confirmation flag for live trading (headless/Docker)")
     parser.add_argument("--web", action="store_true", default=True, help="Launch real-time Web Dashboard (default: True)")
     parser.add_argument("--no-web", action="store_true", help="Disable Web Dashboard")
     parser.add_argument("--port", type=int, default=8080, help="Web dashboard port (default: 8080)")
@@ -66,10 +67,16 @@ def main():
 
     if live_mode:
         print(f"{R}{BR}CAUTION: LIVE EXECUTION SELECTED WITH REAL FUNDS.{RST}")
-        confirm = input("Type 'YES I UNDERSTAND' to proceed with real orders: ").strip()
-        if confirm != "YES I UNDERSTAND":
-            print(f"{Y}Live execution aborted by user.{RST}")
-            sys.exit(0)
+        confirmed = args.confirm_live or os.getenv("CONFIRM_LIVE_TRADING", "").lower() in ("true", "1", "yes")
+        if not confirmed:
+            try:
+                confirm = input("Type 'YES I UNDERSTAND' to proceed with real orders: ").strip()
+                if confirm != "YES I UNDERSTAND":
+                    print(f"{Y}Live execution aborted by user.{RST}")
+                    sys.exit(0)
+            except (EOFError, KeyboardInterrupt):
+                print(f"{Y}Live execution aborted (non-interactive session requires --confirm-live).{RST}")
+                sys.exit(0)
 
     # Initialize Engine
     engine = QuantEngine(live_mode=live_mode)

@@ -4,11 +4,14 @@ Connects directly to Binance USDT-M Futures API with precision rounding, isolate
 """
 
 import math
+import logging
 from typing import Dict, Tuple, Optional, Any
 from binance.client import Client as BinanceClient
 from binance.exceptions import BinanceAPIException
 from config.settings import settings
 from data.market_data import market_data
+
+logger = logging.getLogger("SIA-TradeX.Binance")
 
 
 class BinanceExecutor:
@@ -21,7 +24,8 @@ class BinanceExecutor:
         self.connected = False
 
     def connect(self) -> bool:
-        if not self.api_key or self.api_key == "YOUR_BINANCE_API_KEY_HERE":
+        if not self.api_key or self.api_key in ("YOUR_BINANCE_API_KEY_HERE", "your_binance_api_key_here"):
+            logger.info("[Binance] No API key configured. Live execution unavailable.")
             return False
 
         try:
@@ -29,8 +33,10 @@ class BinanceExecutor:
             self.client.futures_ping()
             self.connected = True
             self._prefetch_symbol_filters()
+            logger.info(f"[Binance] Connected successfully to Futures {'Testnet' if self.testnet else 'Mainnet'}.")
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"[Binance] Connection failed: {e}")
             self.connected = False
             return False
 
@@ -49,8 +55,8 @@ class BinanceExecutor:
                     elif f["filterType"] == "PRICE_FILTER":
                         entry["tick"] = float(f["tickSize"])
                 self._sym_info[sym] = entry
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[Binance] Failed to prefetch symbol filters: {e}")
 
     def get_live_balance(self) -> float:
         if not self.client:
@@ -59,8 +65,8 @@ class BinanceExecutor:
             for b in self.client.futures_account_balance():
                 if b["asset"] == "USDT":
                     return float(b["availableBalance"])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[Binance] Failed to fetch account balance: {e}")
         return 0.0
 
     def round_qty(self, symbol: str, raw_qty: float) -> float:
@@ -85,10 +91,13 @@ class BinanceExecutor:
             return
         try:
             self.client.futures_change_leverage(symbol=symbol, leverage=leverage)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[Binance] Setting leverage {leverage}x on {symbol}: {e}")
         try:
             self.client.futures_change_margin_type(symbol=symbol, marginType="ISOLATED")
+        except BinanceAPIException as e:
+            if e.code != -4046:  # -4046 = No need to change margin type
+                logger.debug(f"[Binance] Setting isolated margin on {symbol}: {e}")
         except Exception:
             pass
 
@@ -128,17 +137,17 @@ class BinanceExecutor:
             sl_rounded = self.round_price(symbol, sl)
 
             # Attached Bracket Protection (Take Profit & Stop Loss)
+            # On Binance Futures, STOP_MARKET and TAKE_PROFIT_MARKET with closePosition=True do NOT take timeInForce
             try:
                 self.client.futures_create_order(
                     symbol=symbol,
                     side=opp_side,
                     type="TAKE_PROFIT_MARKET",
                     stopPrice=tp_rounded,
-                    closePosition=True,
-                    timeInForce="GTE_GTC"
+                    closePosition=True
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[Binance] Could not attach exchange TP on {symbol}: {e}")
 
             try:
                 self.client.futures_create_order(
@@ -146,11 +155,10 @@ class BinanceExecutor:
                     side=opp_side,
                     type="STOP_MARKET",
                     stopPrice=sl_rounded,
-                    closePosition=True,
-                    timeInForce="GTE_GTC"
+                    closePosition=True
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[Binance] Could not attach exchange SL on {symbol}: {e}")
 
             levels = {
                 "entry": fill_price,
@@ -159,9 +167,11 @@ class BinanceExecutor:
                 "sl": sl,
                 "qty": qty
             }
+            logger.info(f"[Binance] Market {direction} executed on {symbol}: {qty} @ ${fill_price:,.4f}")
             return order, levels
 
-        except BinanceAPIException:
+        except BinanceAPIException as e:
+            logger.error(f"[Binance] Order execution failed on {symbol}: {e}")
             return None, None
 
     def close_market_position(self, symbol: str, direction: str, qty: float) -> bool:
@@ -169,13 +179,23 @@ class BinanceExecutor:
             return False
         opp_side = "SELL" if direction == "LONG" else "BUY"
         try:
+            # 1. Cancel orphan open trigger orders for this symbol first
+            try:
+                self.client.futures_cancel_all_open_orders(symbol=symbol)
+            except Exception as e:
+                logger.debug(f"[Binance] Open orders cancel check on {symbol}: {e}")
+
+            # 2. Market sweep close with reduceOnly
+            close_qty = self.round_qty(symbol, qty)
             self.client.futures_create_order(
                 symbol=symbol,
                 side=opp_side,
                 type="MARKET",
-                quantity=self.round_qty(symbol, qty),
+                quantity=close_qty,
                 reduceOnly=True
             )
+            logger.info(f"[Binance] Market closed position on {symbol} (qty: {close_qty})")
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"[Binance] Failed to close position on {symbol}: {e}")
             return False

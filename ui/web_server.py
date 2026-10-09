@@ -4,6 +4,7 @@ FastAPI backend powering the real-time cyber-quant dashboard.
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -12,11 +13,6 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from config.settings import settings
 from storage.database import db
-
-app = FastAPI(title="SIA-TradeX Pro Telemetry API")
-
-STATIC_DIR = Path(__file__).resolve().parent / "static"
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Shared state reference injected from main engine
 engine_ref: Optional[Any] = None
@@ -45,20 +41,8 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-class ManualTradeRequest(BaseModel):
-    symbol: str
-    direction: str
-    size: Optional[float] = 20.0
-    force: bool = False
-
-
-@app.get("/")
-async def get_index():
-    return FileResponse(STATIC_DIR / "index.html")
-
-
-@app.on_event("startup")
-async def start_broadcaster():
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
     async def _broadcaster():
         while True:
             try:
@@ -69,7 +53,26 @@ async def start_broadcaster():
                 pass
             await asyncio.sleep(0.5)
 
-    asyncio.create_task(_broadcaster())
+    task = asyncio.create_task(_broadcaster())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="SIA-TradeX Pro Telemetry API", lifespan=lifespan)
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+class ManualTradeRequest(BaseModel):
+    symbol: str
+    direction: str
+    size: Optional[float] = 20.0
+    force: bool = False
+
+
+@app.get("/")
+async def get_index():
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.websocket("/ws")
@@ -115,6 +118,53 @@ async def stop_ai():
         active = engine_ref.set_ai_trading(False)
         await manager.broadcast(engine_ref.get_dashboard_snapshot())
         return {"status": "ok", "ai_trading_active": False, "message": "AI Autonomous Trading paused"}
+    return {"status": "error", "message": "Engine not attached"}
+
+
+@app.post("/api/mode/toggle")
+async def toggle_trading_mode():
+    """Toggles between LIVE Binance Futures mode and PAPER simulation mode."""
+    if engine_ref:
+        current_live = engine_ref.live_mode
+        target_live = not current_live
+        msg = engine_ref.set_live_mode(target_live)
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
+        return {
+            "status": "ok",
+            "live_mode": engine_ref.live_mode,
+            "message": msg
+        }
+    return {"status": "error", "message": "Engine not attached"}
+
+
+@app.post("/api/ai/rotate-key")
+async def force_rotate_key():
+    """Manually rotates to next Google Gemini API key in pool."""
+    from ai.gemini_service import gemini_service
+    new_key = gemini_service.rotator.rotate("Manual User Request")
+    gemini_service._configure_active_key()
+    st = gemini_service.rotator.get_status()
+    if engine_ref:
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
+    return {
+        "status": "ok",
+        "active_key_index": st["active_key_index"],
+        "total_keys": st["total_keys"],
+        "message": f"Rotated to Gemini Key #{st['active_key_index']} of {st['total_keys']}"
+    }
+
+
+@app.post("/api/ai/scan-now")
+async def force_scan():
+    """Triggers an immediate multi-asset universe confluence scan and auto-execution."""
+    if engine_ref:
+        opened = engine_ref.scan_universe_confluence()
+        await manager.broadcast(engine_ref.get_dashboard_snapshot())
+        return {
+            "status": "ok",
+            "opened": opened,
+            "message": f"Universe Confluence Scan complete. Opened {opened} position(s)."
+        }
     return {"status": "error", "message": "Engine not attached"}
 
 

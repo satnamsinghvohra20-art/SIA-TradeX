@@ -5,6 +5,9 @@
 __pycache__/
 *.pyc
 signal_bot.log
+*.log
 bot_state.json
 paper_equity.json
 journal_*.json
+.pytest_cache/
+backups/

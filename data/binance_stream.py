@@ -123,15 +123,20 @@ class BinanceWebSocketStream:
                 "ts": time.time()
             }
 
-            self.recent_liquidations.append(liq_event)
-            if len(self.recent_liquidations) > 200:
-                self.recent_liquidations = self.recent_liquidations[-100:]
+            with self._lock:
+                self.recent_liquidations.append(liq_event)
+                if len(self.recent_liquidations) > 200:
+                    self.recent_liquidations = self.recent_liquidations[-100:]
 
             for cb in self.on_liquidation_callbacks:
                 try:
                     cb(liq_event)
                 except Exception:
                     pass
+
+    def get_recent_liquidations(self, limit: int = 8) -> List[Dict[str, Any]]:
+        with self._lock:
+            return list(self.recent_liquidations[-limit:])
 
     def start(self):
         if self._running:

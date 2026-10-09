@@ -1,14 +1,11 @@
-"""
-SIA-TradeX: Google Gemini AI Intelligence Engine
-Thread-safe Token Bucket rate limiter, structured Pydantic outputs, and anti-429 backoff.
-"""
-
+import os
 import time
 import json
 import re
 import hashlib
 import threading
-from typing import Optional, Dict, Any, List
+import logging
+from typing import Optional, Dict, Any, List, Tuple
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 import google.generativeai as genai
@@ -17,6 +14,74 @@ from core.models import (
     AISignalDecision, AISmartExitDecision, MarketContext,
     MarketRegime, Direction
 )
+
+logger = logging.getLogger("SIA-TradeX.AI")
+
+
+class GeminiKeyRotator:
+    """
+    Multi-Key Pool for Google Gemini API.
+    Discovers all available keys from:
+    - GEMINI_API_KEY (single or comma-separated)
+    - GEMINI_API_KEYS (comma or space separated)
+    - GEMINI_API_KEY_1 .. GEMINI_API_KEY_25
+    Automatically rotates to the next key on HTTP 429 or quota exhaustion.
+    """
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.keys: List[str] = self._discover_keys()
+        self.current_idx: int = 0
+        self.rotations_count: int = 0
+        self.cooldowns: Dict[str, float] = {}
+
+    def _discover_keys(self) -> List[str]:
+        found: List[str] = []
+        raw_single = settings.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+        if raw_single and raw_single != "YOUR_GEMINI_KEY_HERE" and raw_single != "your_gemini_key_here":
+            for k in raw_single.replace(";", ",").replace("\n", ",").split(","):
+                k = k.strip()
+                if k and k not in found and len(k) > 10:
+                    found.append(k)
+
+        raw_multi = getattr(settings, "GEMINI_API_KEYS", "") or os.getenv("GEMINI_API_KEYS", "")
+        if raw_multi:
+            for k in raw_multi.replace(";", ",").replace("\n", ",").split(","):
+                k = k.strip()
+                if k and k not in found and len(k) > 10:
+                    found.append(k)
+
+        for i in range(1, 26):
+            k = os.getenv(f"GEMINI_API_KEY_{i}", "").strip()
+            if k and k not in found and len(k) > 10:
+                found.append(k)
+
+        return found
+
+    def get_current_key(self) -> Optional[str]:
+        with self._lock:
+            if not self.keys:
+                return None
+            return self.keys[self.current_idx % len(self.keys)]
+
+    def rotate(self, reason: str = "Quota limit hit") -> Optional[str]:
+        with self._lock:
+            if not self.keys:
+                return None
+            old_idx = self.current_idx
+            self.current_idx = (self.current_idx + 1) % len(self.keys)
+            self.rotations_count += 1
+            new_key = self.keys[self.current_idx]
+            logger.warning(f"[GeminiRotator] Rotated key from index {old_idx+1} to {self.current_idx+1}/{len(self.keys)}. Reason: {reason}")
+            return new_key
+
+    def get_status(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "total_keys": len(self.keys),
+                "active_key_index": (self.current_idx + 1) if self.keys else 0,
+                "rotations_count": self.rotations_count,
+                "has_keys": len(self.keys) > 0
+            }
 
 
 class TokenBucketRateLimiter:
@@ -50,20 +115,32 @@ class TokenBucketRateLimiter:
 
 class GeminiService:
     def __init__(self):
-        self.api_key = settings.GEMINI_API_KEY
-        self.model_name = settings.GEMINI_MODEL
-        self.ok = bool(self.api_key and self.api_key != "YOUR_GEMINI_KEY_HERE")
+        self.rotator = GeminiKeyRotator()
+        configured_model = settings.GEMINI_MODEL
+        # Normalize model string: replace hallucinated 'gemini-2.5-flash' with supported official model
+        if "2.5" in configured_model:
+            configured_model = "gemini-1.5-flash"
+        self.model_name = configured_model
         self.model = None
+        self.ok = False
         self.limiter = TokenBucketRateLimiter(max_rpm=settings.GEMINI_MAX_RPM)
         self._cache_lock = threading.Lock()
         self._cache: Dict[str, Tuple[Any, float]] = {}
 
-        if self.ok:
+        self._configure_active_key()
+
+    def _configure_active_key(self):
+        key = self.rotator.get_current_key()
+        if key:
             try:
-                genai.configure(api_key=self.api_key)
+                genai.configure(api_key=key)
                 self.model = genai.GenerativeModel(self.model_name)
-            except Exception:
+                self.ok = True
+            except Exception as e:
+                logger.error(f"[Gemini] Configuration error with key: {e}")
                 self.ok = False
+        else:
+            self.ok = False
 
     def _clean_json_response(self, text: str) -> Optional[Dict[str, Any]]:
         """Strips markdown and parses valid JSON from LLM output."""
@@ -155,7 +232,12 @@ DECISION RULES:
                 self._cache[cache_key] = (decision, time.time() + 60.0)
             return decision
 
-        except Exception:
+        except Exception as e:
+            err_str = str(e)
+            logger.warning(f"[Gemini] API error during signal eval for {symbol}: {err_str}")
+            if any(k in err_str.lower() for k in ["429", "resourceexhausted", "quota", "invalid", "permission"]):
+                self.rotator.rotate(err_str)
+                self._configure_active_key()
             return fallback
 
     def evaluate_smart_exit(
@@ -206,7 +288,12 @@ JSON only:
             if not data:
                 return fallback
             return AISmartExitDecision(**data)
-        except Exception:
+        except Exception as e:
+            err_str = str(e)
+            logger.warning(f"[Gemini] API error during smart exit eval for {symbol}: {err_str}")
+            if any(k in err_str.lower() for k in ["429", "resourceexhausted", "quota"]):
+                self.rotator.rotate(err_str)
+                self._configure_active_key()
             return fallback
 
 

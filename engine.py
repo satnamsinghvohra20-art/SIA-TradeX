@@ -7,6 +7,7 @@ import time
 import copy
 import threading
 import asyncio
+import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
@@ -32,6 +33,8 @@ from execution.binance_executor import BinanceExecutor
 from execution.smart_router import SmartOrderRouter
 from ui.telegram_service import telegram_service
 from ui.web_server import set_engine, broadcast_state
+
+logger = logging.getLogger("SIA-TradeX.Engine")
 
 
 class QuantEngine:
@@ -141,8 +144,9 @@ class QuantEngine:
             "regime": btc_ctx.regime.value if btc_ctx else "UNKNOWN",
             "positions": pos_list,
             "ticker_prices": self.stream.get_all_prices(),
-            "recent_liquidations": self.stream.recent_liquidations[-8:] if self.stream.recent_liquidations else [],
+            "recent_liquidations": self.stream.get_recent_liquidations(8),
             "latest_ai_event": self.latest_ai_event,
+            "gemini_rotator": gemini_service.rotator.get_status(),
             "world_time_utc": now_utc.strftime("%Y-%m-%d %H:%M:%S UTC"),
             "local_time": now_local.strftime("%H:%M:%S"),
             "timestamp": now_utc.strftime("%H:%M:%S UTC")
@@ -225,6 +229,65 @@ class QuantEngine:
         db.clear_all_trades()
         self.consecutive_losses = 0
         return "All positions closed, history wiped, paper account reset to $1,000.00."
+
+    def set_live_mode(self, live: bool) -> str:
+        if live:
+            if not self.binance.connected:
+                conn_ok = self.binance.connect()
+                if not conn_ok:
+                    self.live_mode = False
+                    return "Live connection failed. Check API credentials in .env. Remaining in PAPER mode."
+            self.live_mode = True
+            return "Switched to LIVE Binance Futures mode."
+        else:
+            self.live_mode = False
+            return "Switched to PAPER Simulation mode."
+
+    def scan_universe_confluence(self) -> int:
+        """Immediate full scan across universe symbols for high-confluence setups."""
+        opened = 0
+        equity = self.get_equity()
+        for sym in settings.ACTIVE_SYMBOLS:
+            with self._positions_lock:
+                sym_count = sum(1 for p in self.positions.values() if p.symbol == sym)
+                if sym_count >= settings.MAX_PER_SYMBOL_POSITIONS:
+                    continue
+                if len(self.positions) >= settings.MAX_OPEN_TRADES:
+                    break
+
+            try:
+                ctx = market_data.get_market_context(sym)
+                hint = ctx.momentum_1h if ctx.momentum_1h in ("LONG", "SHORT") else ("LONG" if (ctx.rsi_1h or 50) > 50 else "SHORT")
+                strat_eval = confluence_strategy.evaluate(sym, hint, ctx, equity)
+                if strat_eval["blocked"]:
+                    continue
+
+                fast_ok, fast_bonus, fast_reason = self.hybrid_ai.tier1_fast_gate(sym, hint, ctx)
+                if not fast_ok:
+                    continue
+
+                ai_dec = AISignalDecision(
+                    signal=hint,
+                    confidence=78,
+                    regime=ctx.regime.value,
+                    reason=f"Scan Now: {fast_reason}",
+                    key_drivers=["Multi-Asset Scanner", "Microstructure Confluence"]
+                )
+                self.latest_ai_event = {
+                    "symbol": sym,
+                    "signal": ai_dec.signal,
+                    "confidence": ai_dec.confidence,
+                    "reason": ai_dec.reason
+                }
+
+                self._open_position(
+                    sym, hint, 5 + fast_bonus, strat_eval["position_size"],
+                    [f"Scan Now Confluence ({fast_reason})"], ["universe_scan"], ai_dec, ctx
+                )
+                opened += 1
+            except Exception as e:
+                logger.warning(f"[ScanNow] Error scanning {sym}: {e}")
+        return opened
 
 
     def inject_manual_trade(self, symbol: str, direction: str, size: Optional[float], force: bool):
@@ -360,7 +423,7 @@ class QuantEngine:
         can_trade, guard_reason = risk_manager.check_guardrails(
             metrics["pnl"], self.consecutive_losses, equity
         )
-        if not can_trade and not telegram_service.paused:
+        if not can_trade or telegram_service.paused:
             return
 
         # 1. Process manual override signals first (always allowed, even when AI is paused)
@@ -427,7 +490,7 @@ class QuantEngine:
                 continue
 
             # Trigger Tier-2 Asynchronous Gemini Update in background
-            self.hybrid_ai.tier2_async_update(sym, ctx)
+            self.hybrid_ai.tier2_async_update(sym, ctx, direction=direction)
 
             ai_decision = AISignalDecision(
                 signal=direction,
@@ -461,10 +524,6 @@ class QuantEngine:
             if not price or price <= 0:
                 continue
 
-            price = self._get_fast_price(sym) or pos.entry
-            if not price or price <= 0:
-                continue
-
             mult = pos.leverage * pos.usdt_size
             pnl_usd = ((price - pos.entry) / pos.entry * mult) if pos.direction == "LONG" else ((pos.entry - price) / pos.entry * mult)
 
@@ -473,6 +532,8 @@ class QuantEngine:
                 pos.peak_pnl = pnl_usd
 
             ctx = market_data.get_market_context(sym)
+            if ctx.rsi_5m is not None:
+                pos.last_rsi5 = ctx.rsi_5m
 
             # 1. Smart Profit Protection Check
             pp_title, pp_reasons = ProfitProtector.evaluate(pos, price, pnl_usd, ctx)
@@ -490,6 +551,21 @@ class QuantEngine:
 
                     if self.live_mode:
                         self.binance.close_market_position(sym, pos.direction, half_qty)
+                        # Replace exchange SL order with breakeven SL for remaining half quantity
+                        if self.binance.client:
+                            try:
+                                self.binance.client.futures_cancel_all_open_orders(symbol=sym)
+                                opp_side = "SELL" if pos.direction == "LONG" else "BUY"
+                                sl_rounded = self.binance.round_price(sym, pos.entry)
+                                self.binance.client.futures_create_order(
+                                    symbol=sym,
+                                    side=opp_side,
+                                    type="STOP_MARKET",
+                                    stopPrice=sl_rounded,
+                                    closePosition=True
+                                )
+                            except Exception as e:
+                                logger.warning(f"[Binance] Could not set breakeven SL order on {sym}: {e}")
                     else:
                         self.paper_account.release_margin(half_usdt, half_pnl)
 
@@ -501,7 +577,7 @@ class QuantEngine:
 
                     # Record Partial Win to DB
                     db.record_trade(TradeRecord(
-                        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
                         symbol=sym, direction=pos.direction, entry=pos.entry, exit=price,
                         pnl=round(half_pnl, 2), reason="PARTIAL TP1 (50% locked)",
                         sources=pos.sources, score=pos.score, ai_reason=pos.ai_reason,

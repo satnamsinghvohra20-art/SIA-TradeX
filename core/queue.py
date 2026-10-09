@@ -34,6 +34,7 @@ class SignalQueue:
     def flush_merged(self) -> List[Dict[str, Any]]:
         """
         Groups pending signals by symbol and direction, summing scores and merging reasons.
+        Consumed signals are cleared from pending.
         """
         results = []
         now = time.time()
@@ -41,10 +42,11 @@ class SignalQueue:
             for symbol, signals in list(self._pending.items()):
                 # Filter out stale signals
                 active = [s for s in signals if now - s.ts < self.STALE_SEC]
-                self._pending[symbol] = active
                 if not active:
+                    self._pending[symbol] = []
                     continue
 
+                consumed_ids = set()
                 for direction in ("LONG", "SHORT"):
                     group = [s for s in active if s.direction == direction]
                     if not group:
@@ -65,8 +67,10 @@ class SignalQueue:
                         "raw_events": raw_events,
                     })
 
-                    # Retain any signals for opposite direction if any
-                    self._pending[symbol] = [s for s in active if s.direction != direction]
+                    for s in group:
+                        consumed_ids.add(s.id)
+
+                self._pending[symbol] = [s for s in active if s.id not in consumed_ids]
 
         return results
 

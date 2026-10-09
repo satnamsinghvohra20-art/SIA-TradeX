@@ -1,0 +1,28 @@
+[Unit]
+Description=SIA-TradeX Autonomous Quantitative Trading Engine
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradex
+WorkingDirectory=/opt/sia-tradex
+ExecStart=/opt/sia-tradex/venv/bin/python run.py
+Restart=always
+RestartSec=5s
+
+# Security and Sandbox Isolation
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Environment Configuration
+EnvironmentFile=/opt/sia-tradex/.env
+Environment=PYTHONUNBUFFERED=1
+
+# Resource Limits
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

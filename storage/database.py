@@ -132,11 +132,14 @@ class Database:
             return [dict(r) for r in rows]
 
     def get_daily_metrics(self) -> Dict[str, Any]:
-        today_prefix = datetime.now().strftime("%Y-%m-%d")
+        now_utc = datetime.utcnow()
+        start_of_day_utc = datetime(now_utc.year, now_utc.month, now_utc.day, 0, 0, 0).timestamp()
+        today_prefix = now_utc.strftime("%Y-%m-%d")
+
         with self._get_connection() as conn:
             rows = conn.execute("""
-            SELECT pnl, profit_protected FROM trades WHERE timestamp LIKE ?
-            """, (f"{today_prefix}%",)).fetchall()
+            SELECT pnl, profit_protected FROM trades WHERE created_at >= ?
+            """, (start_of_day_utc,)).fetchall()
             
             pnl_sum = sum(r["pnl"] for r in rows)
             wins = sum(1 for r in rows if r["pnl"] > 0)
