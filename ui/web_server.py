@@ -278,6 +278,33 @@ async def get_equity_curve():
     return db.get_equity_history(limit=500)
 
 
+@app.get("/api/daily-income")
+async def get_daily_income():
+    """Returns all daily income ledger records from database."""
+    return db.get_all_daily_income()
+
+
+@app.get("/api/excel/download")
+async def download_excel_ledger():
+    """Serves the generated multi-tab Excel ledger file for download."""
+    from storage.excel_ledger import excel_ledger
+    db.sync_excel_ledger()
+    if excel_ledger.primary_file.exists():
+        return FileResponse(
+            excel_ledger.primary_file,
+            filename="SIA_TradeX_Income_Ledger.xlsx",
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    return {"status": "error", "message": "Excel ledger not yet generated"}
+
+
+@app.post("/api/excel/sync")
+async def trigger_excel_sync():
+    """Forces synchronization of SQLite database to Excel ledger."""
+    ok = db.sync_excel_ledger()
+    return {"status": "ok" if ok else "error", "synced": ok}
+
+
 def set_engine(engine_instance: Any):
     global engine_ref
     engine_ref = engine_instance

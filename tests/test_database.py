@@ -85,3 +85,19 @@ def test_db_state_persistence(temp_db):
     val = temp_db.get_state("ai_mode")
     assert val == {"status": "active", "rpm": 14}
     assert temp_db.get_state("non_existent", default="def") == "def"
+
+
+def test_db_daily_income_and_all_trades(temp_db):
+    now_utc = "2026-10-10 12:00:00 UTC"
+    temp_db.record_trade(TradeRecord(
+        timestamp=now_utc, symbol="AVAXUSDT", direction="SHORT",
+        entry=10.20, exit=10.05, pnl=1.50, reason="TP1",
+        sources=["alpha"], score=9, equity=1001.50
+    ))
+    all_trades = temp_db.get_all_trades()
+    assert len(all_trades) >= 1
+
+    daily = temp_db.get_all_daily_income()
+    assert len(daily) >= 1
+    assert daily[0]["date"] == "2026-10-10"
+    assert daily[0]["realized_income"] >= 1.50

@@ -169,3 +169,19 @@ def test_api_portfolio_notify(client):
     data = res.json()
     assert data["status"] == "ok"
     assert "Portfolio status" in data["message"]
+
+
+def test_api_daily_income(client):
+    res = client.get("/api/daily-income")
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)
+
+
+def test_api_excel_endpoints(client):
+    res_sync = client.post("/api/excel/sync")
+    assert res_sync.status_code == 200
+    assert res_sync.json()["status"] == "ok"
+
+    res_dl = client.get("/api/excel/download")
+    assert res_dl.status_code == 200
+    assert res_dl.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
