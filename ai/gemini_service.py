@@ -138,11 +138,7 @@ class TokenBucketRateLimiter:
 class GeminiService:
     def __init__(self):
         self.rotator = GeminiKeyRotator()
-        configured_model = settings.GEMINI_MODEL
-        # Normalize model string: replace hallucinated 'gemini-2.5-flash' with supported official model
-        if "2.5" in configured_model:
-            configured_model = "gemini-1.5-flash"
-        self.model_name = configured_model
+        self.model_name = settings.GEMINI_MODEL or "gemini-2.5-flash"
         self.model = None
         self.ok = False
         self.limiter = TokenBucketRateLimiter(max_rpm=settings.GEMINI_MAX_RPM)
@@ -156,8 +152,22 @@ class GeminiService:
         if key:
             try:
                 genai.configure(api_key=key)
-                self.model = genai.GenerativeModel(self.model_name)
-                self.ok = True
+                candidates = [self.model_name, "gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-pro-latest"]
+                configured = False
+                for candidate in candidates:
+                    try:
+                        self.model = genai.GenerativeModel(candidate)
+                        self.model_name = candidate
+                        configured = True
+                        break
+                    except Exception:
+                        continue
+                if configured:
+                    self.ok = True
+                    logger.info(f"[Gemini] Active key index {self.rotator.current_idx + 1} ready with model '{self.model_name}'")
+                else:
+                    self.model = genai.GenerativeModel("gemini-2.5-flash")
+                    self.ok = True
             except Exception as e:
                 logger.error(f"[Gemini] Configuration error with key: {e}")
                 self.ok = False

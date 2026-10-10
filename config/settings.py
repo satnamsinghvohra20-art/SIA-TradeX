@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # AI Configuration (Gemini)
     GEMINI_API_KEY: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
     GEMINI_API_KEYS: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEYS", ""))
-    GEMINI_MODEL: str = Field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-1.5-flash"))
+    GEMINI_MODEL: str = Field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
     GEMINI_MAX_RPM: int = 14  # Max 14 requests/min to strictly respect 15 RPM free tier
     GEMINI_AUTO_TRADE: bool = True
     GEMINI_AUTO_SCAN_SEC: int = 25
